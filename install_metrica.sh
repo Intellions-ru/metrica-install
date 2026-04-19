@@ -4,9 +4,9 @@ set -Eeuo pipefail
 INSTALLER_VERSION="v1"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
 DEFAULT_IMAGE_VERSION="v0.1.0"
-DEFAULT_BUNDLE_REF="main"
-DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions"
-DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://downloads.intellions.ru/intellion-metrica/install-bundles"
+DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
+DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
+DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
 SOURCE_FALLBACK_BUNDLE_URL_BASE="https://codeload.github.com/intellions/intellions_io/tar.gz/refs/heads"
 MIN_MEMORY_MB=2048
 WARN_MEMORY_MB=4096
@@ -118,7 +118,7 @@ Examples:
     --installation-name "Beauty Doc Analytics" \
     --owner-email owner@example.com
 
-  curl -fsSL https://raw.githubusercontent.com/intellions/intellions_io/main/intellions-analytics/scripts/install_metrica.sh \
+  curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/install_metrica.sh \
     | sudo bash -s -- \
       --publish-mode path \
       --domain example.com \
@@ -537,7 +537,11 @@ resolve_bundle_root() {
   archive="$work_dir/install-bundle.tar.gz"
 
   if [[ -z "$BUNDLE_URL" ]]; then
-    BUNDLE_URL="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
+    if [[ "$DEFAULT_PRODUCT_BUNDLE_URL_BASE" == *"/releases/download" ]]; then
+      BUNDLE_URL="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/${BUNDLE_REF}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
+    else
+      BUNDLE_URL="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
+    fi
   fi
 
   log "Downloading install bundle from $BUNDLE_URL"

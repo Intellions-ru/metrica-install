@@ -33,7 +33,7 @@
 Если у вас уже есть install bundle:
 
 ```bash
-curl -fLO <INSTALL_BUNDLE_URL_FROM_INTELLIONS>
+curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.1.0/intellion-metrica-install-bundle-v0.1.0.tar.gz
 ```
 
 ```bash
