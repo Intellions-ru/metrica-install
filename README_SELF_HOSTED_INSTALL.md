@@ -14,6 +14,10 @@
 
 Метрика работает на вашем Linux-сервере и публикуется либо по пути вида `/analytics`, либо на отдельном поддомене.
 
+Дополнительный документ для ручной приемки после установки:
+
+- `README_SELF_HOSTED_MANUAL_TESTS.md`
+
 ## Что нужно до начала установки
 
 Минимально нужно:
@@ -40,7 +44,7 @@ Docker устанавливать вручную не обязательно: у
 Пример:
 
 - `example.com/analytics`
-- `beauty-doc.pro/analytics`
+- `site.ru/analytics`
 
 Это можно выводить на первый план как основной сценарий для покупателя.
 
@@ -55,7 +59,7 @@ Docker устанавливать вручную не обязательно: у
 Пример:
 
 - `analytics.example.com`
-- `analytics.beauty-doc.pro`
+- `analytics.site.ru`
 
 Этот вариант можно оставлять:
 
@@ -131,12 +135,12 @@ sudo bash ./scripts/install_metrica.sh \
   --owner-email owner@example.com
 ```
 
-### Вариант 2. Если Intellions передала вам прямую ссылку на установщик
+### Вариант 2. Запуск по прямой ссылке на установщик
 
-Команда будет той же по параметрам:
+Если вы хотите не распаковывать bundle вручную, можно сразу запустить установщик по публичной ссылке:
 
 ```bash
-curl -fsSL <INSTALLER_URL_FROM_INTELLIONS> | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.1.0/install_metrica.sh | sudo bash -s -- \
   --publish-mode path \
   --domain example.com \
   --entry-path /analytics \

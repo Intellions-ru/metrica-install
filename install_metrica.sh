@@ -115,14 +115,14 @@ Examples:
   sudo bash ./scripts/install_metrica.sh \
     --publish-mode subdomain \
     --domain analytics.example.com \
-    --installation-name "Beauty Doc Analytics" \
+    --installation-name "Example Analytics" \
     --owner-email owner@example.com
 
   curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/install_metrica.sh \
     | sudo bash -s -- \
       --publish-mode path \
       --domain example.com \
-      --installation-name "Beauty Doc Analytics" \
+      --installation-name "Example Analytics" \
       --owner-email owner@example.com
 EOF
 }
