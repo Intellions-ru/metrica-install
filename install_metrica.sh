@@ -17,7 +17,7 @@ INSTALLATION_NAME=""
 INSTALLATION_ID=""
 PUBLISH_MODE=""
 PUBLIC_HOST=""
-ENTRY_PATH="/analytics"
+ENTRY_PATH="/metrica"
 OWNER_EMAIL=""
 OWNER_NAME="Владелец Метрики"
 OWNER_PASSWORD=""
@@ -96,7 +96,7 @@ Optional:
   --api-image <ref>
   --worker-image <ref>
   --control-plane-image <ref>
-  --entry-path </analytics>
+  --entry-path </metrica>
   --entitlement-file <path>
   --acme-email <email>
   --max-bot-token <token>
@@ -122,6 +122,7 @@ Examples:
     | sudo bash -s -- \
       --publish-mode path \
       --domain example.com \
+      --entry-path /metrica \
       --installation-name "Example Analytics" \
       --owner-email owner@example.com
 EOF
@@ -719,10 +720,15 @@ fetch_csrf_token() {
 }
 
 bootstrap_owner() {
-  local csrf_token payload body_file http_code activation_token activation_path activation_expires_at bootstrap_mode
+  local csrf_token payload body_file http_code activation_token activation_path activation_expires_at bootstrap_mode display_panel_url
   bootstrap_mode="activation_link"
   if [[ -n "$OWNER_PASSWORD" ]]; then
     bootstrap_mode="password"
+  fi
+  if [[ "$PUBLISH_MODE" == "path" ]]; then
+    display_panel_url="https://${PUBLIC_HOST}${ENTRY_PATH}"
+  else
+    display_panel_url="https://${PUBLIC_HOST}/ru/analytics"
   fi
 
   csrf_token="$(fetch_csrf_token)"
@@ -755,7 +761,7 @@ bootstrap_owner() {
 Owner email: ${OWNER_EMAIL}
 Owner name: ${OWNER_NAME}
 Owner password: ${OWNER_PASSWORD}
-Panel URL: https://${PUBLIC_HOST}/ru/analytics
+Panel URL: ${display_panel_url}
 Generated at: ${BOOT_TS}
 EOF
       chmod 600 "$INSTALL_DIR/state/owner-credentials.txt"

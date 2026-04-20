@@ -17,7 +17,7 @@
 
 Если выбран path-режим:
 
-- `https://example.com/analytics`
+- `https://example.com/metrica`
 
 Если выбран режим отдельного поддомена:
 
@@ -168,7 +168,7 @@ cat /opt/intellion-metrica/state/owner-activation.txt
 - наличие образов в GHCR;
 - работа owner activation flow в продукте.
 
-Еще нужен отдельный живой end-to-end прогон на чистом внешнем сервере:
+Еще нужен отдельный живой end-to-end прогон на реальном внешнем сервере:
 
 - полный self-hosted install по этой инструкции;
 - первое подключение реального сайта;

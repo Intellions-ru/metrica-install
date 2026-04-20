@@ -12,7 +12,7 @@
 - безопасный сбор событий и согласий;
 - отчеты, цели и базовый рабочий контур.
 
-Метрика работает на вашем Linux-сервере и публикуется либо по пути вида `/analytics`, либо на отдельном поддомене.
+Метрика работает на вашем Linux-сервере и публикуется либо по пути вида `/metrica`, либо на отдельном поддомене.
 
 Дополнительный документ для ручной приемки после установки:
 
@@ -39,14 +39,22 @@ Docker устанавливать вручную не обязательно: у
 
 ## Какой вариант публикации выбрать
 
-### Основной вариант: на основном домене по адресу `/analytics`
+### Основной вариант: на основном домене по адресу `/metrica`
 
 Пример:
 
-- `example.com/analytics`
-- `site.ru/analytics`
+- `example.com/metrica`
+- `site.ru/metrica`
 
 Это можно выводить на первый план как основной сценарий для покупателя.
+
+Это и есть базовая модель продукта:
+
+- основной сайт и Метрика живут на одном сервере;
+- сайт открывается как обычно;
+- Метрика открывается по отдельному пути на этом же домене.
+
+Отдельный сервер для Метрики возможен, но не считается основным клиентским сценарием.
 
 Плюсы:
 
@@ -83,7 +91,7 @@ ssh root@<IP_СЕРВЕРА>
 
 Это значит следующее:
 
-- если вы ставите Метрику по адресу `example.com/analytics`, домен `example.com` должен вести на тот сервер, где вы запускаете Метрику;
+- если вы ставите Метрику по адресу `example.com/metrica`, домен `example.com` должен вести на тот сервер, где вы запускаете Метрику;
 - если вы ставите Метрику на поддомене `analytics.example.com`, то на ваш сервер должен вести именно `analytics.example.com`.
 
 Иначе установка может завершиться успешно, но панель не откроется в браузере, потому что запрос уйдет на другой сервер.
@@ -180,7 +188,7 @@ cd intellion-metrica-install-bundle-<version>
 sudo bash ./scripts/install_metrica.sh \
   --publish-mode path \
   --domain example.com \
-  --entry-path /analytics \
+  --entry-path /metrica \
   --installation-name "Example Analytics" \
   --owner-email owner@example.com
 ```
@@ -193,7 +201,7 @@ sudo bash ./scripts/install_metrica.sh \
 curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.1.0/install_metrica.sh | sudo bash -s -- \
   --publish-mode path \
   --domain example.com \
-  --entry-path /analytics \
+  --entry-path /metrica \
   --installation-name "Example Analytics" \
   --owner-email owner@example.com
 ```
@@ -223,7 +231,7 @@ Git или GitHub могут использоваться нами как кан
 sudo bash ./scripts/install_metrica.sh \
   --publish-mode path \
   --domain example.com \
-  --entry-path /analytics \
+  --entry-path /metrica \
   --installation-name "Example Analytics" \
   --owner-email owner@example.com
 ```
@@ -276,7 +284,7 @@ sudo bash ./scripts/install_metrica.sh \
 
 Что должно получиться:
 
-- точка входа `/analytics` открывается по вашему адресу;
+- точка входа `/metrica` открывается по вашему адресу;
 - файл `owner-activation.txt` существует;
 - в `install-summary.json` статус установки `passed` или `passed_with_warnings`.
 
@@ -365,8 +373,8 @@ cat /opt/intellion-metrica/state/owner-activation.txt
 
 Upstream Метрики:
 
-- `https://analytics.example.com/api/collect`
-- `https://analytics.example.com/api/consent`
+- `https://example.com/api/collect`
+- `https://example.com/api/consent`
 
 Для proxy нужны:
 
@@ -529,7 +537,7 @@ Upstream Метрики:
 - не проходит активация владельца;
 - не поднимается панель после успешной установки;
 - не идут подписанные collect/consent запросы;
-- нужен режим публикации через путь `/analytics`;
+- нужно аккуратно встроить Метрику в уже работающий боевой домен или сервер;
 - требуется повторная выдача доступа владельца;
 - нужен production-grade handoff для боевой среды.
 
