@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.2.0"
+DEFAULT_IMAGE_VERSION="v0.2.1"
 DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
@@ -670,6 +670,19 @@ resolve_bundle_root() {
   BUNDLE_ROOT="$(cd "$(dirname "$(dirname "$candidate")")" && pwd)"
 }
 
+load_bundled_images_if_present() {
+  local image_dir image_archive
+  image_dir="$BUNDLE_ROOT/images"
+  [[ -d "$image_dir" ]] || return
+
+  shopt -s nullglob
+  for image_archive in "$image_dir"/*.tar; do
+    log "Loading bundled image $(basename "$image_archive")"
+    docker load -i "$image_archive" >/dev/null
+  done
+  shopt -u nullglob
+}
+
 render_template() {
   local source="$1"
   local destination="$2"
@@ -1143,6 +1156,8 @@ main() {
 
   collect_inputs
   resolve_image_refs
+  resolve_bundle_root
+  load_bundled_images_if_present
   preflight_checks
 
   if [[ "$PRECHECK_ONLY" -eq 1 ]]; then
@@ -1155,7 +1170,6 @@ main() {
     exit 0
   fi
 
-  resolve_bundle_root
   prepare_install_tree
   deploy_stack
   bootstrap_owner

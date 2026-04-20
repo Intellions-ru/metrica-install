@@ -18,13 +18,19 @@
 Рекомендуемый старт:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.0/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.1/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain example.com \
   --entry-path /metrica \
   --installation-name "Example Analytics" \
   --owner-email owner@example.com
 ```
+
+Для самого простого старта лучше использовать versioned install bundle из Releases:
+
+- `intellion-metrica-install-bundle-v0.2.1.tar.gz`
+
+Он уже включает product images, поэтому отдельный Docker registry login для обычной установки не нужен.
 
 Если нужен полный buyer-facing путь со всеми шагами, открывайте:
 

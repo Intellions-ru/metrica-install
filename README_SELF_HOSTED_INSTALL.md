@@ -211,14 +211,23 @@ ping example.com
 Сначала скачайте install bundle на сервер:
 
 ```bash
-curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.0/intellion-metrica-install-bundle-v0.2.0.tar.gz
+curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.1/intellion-metrica-install-bundle-v0.2.1.tar.gz
 ```
+
+Этот bundle уже включает:
+
+- установщик;
+- buyer-facing инструкции;
+- шаблоны proxy;
+- product images для Метрики.
+
+То есть отдельный вход в Docker registry для обычного старта не нужен.
 
 Распакуйте архив и перейдите в каталог:
 
 ```bash
-tar -xzf intellion-metrica-install-bundle-v0.2.0.tar.gz
-cd intellion-metrica-install-bundle-v0.2.0
+tar -xzf intellion-metrica-install-bundle-v0.2.1.tar.gz
+cd intellion-metrica-install-bundle-v0.2.1
 ```
 
 Запустите установку:
@@ -235,7 +244,7 @@ sudo bash ./scripts/install_metrica.sh \
 ### Вариант 2. По прямой ссылке на установщик
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.0/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.1/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain example.com \
   --entry-path /metrica \
@@ -263,7 +272,7 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 ### Пример для поддомена
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.0/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.1/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-subdomain \
   --domain analytics.example.com \
   --installation-name "Example Analytics" \
