@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.2.1"
+DEFAULT_IMAGE_VERSION="v0.2.2"
 DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
@@ -665,15 +665,19 @@ resolve_bundle_root() {
   fi
   tar -xzf "$archive" -C "$work_dir"
 
-  candidate="$(find "$work_dir" -path '*/intellions-analytics/install/docker-compose.install.yml' -print | head -n 1 || true)"
+  candidate="$(find "$work_dir" \( -path '*/install/docker-compose.install.yml' -o -path '*/intellions-analytics/install/docker-compose.install.yml' \) -print | head -n 1 || true)"
   [[ -n "$candidate" ]] || die "Failed to locate install bundle contents after download."
-  BUNDLE_ROOT="$(cd "$(dirname "$(dirname "$candidate")")" && pwd)"
+  if [[ "$candidate" == *"/intellions-analytics/install/docker-compose.install.yml" ]]; then
+    BUNDLE_ROOT="$(cd "$(dirname "$(dirname "$candidate")")" && pwd)"
+  else
+    BUNDLE_ROOT="$(cd "$(dirname "$(dirname "$candidate")")" && pwd)"
+  fi
 }
 
 load_bundled_images_if_present() {
   local image_dir image_archive
   image_dir="$BUNDLE_ROOT/images"
-  [[ -d "$image_dir" ]] || return
+  [[ -d "$image_dir" ]] || return 0
 
   shopt -s nullglob
   for image_archive in "$image_dir"/*.tar; do
