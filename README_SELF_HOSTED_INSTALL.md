@@ -35,9 +35,9 @@
 ### Быстрый вариант через install bundle
 
 ```bash
-curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.2/intellion-metrica-install-bundle-v0.2.2.tar.gz
-tar -xzf intellion-metrica-install-bundle-v0.2.2.tar.gz
-cd intellion-metrica-install-bundle-v0.2.2
+curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.3/intellion-metrica-install-bundle-v0.2.3.tar.gz
+tar -xzf intellion-metrica-install-bundle-v0.2.3.tar.gz
+cd intellion-metrica-install-bundle-v0.2.3
 sudo bash ./scripts/install_metrica.sh \
   --publish-mode attach-path \
   --domain YOUR_DOMAIN \
@@ -49,7 +49,7 @@ sudo bash ./scripts/install_metrica.sh \
 ### Быстрый вариант по прямой ссылке
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.2/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.3/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain YOUR_DOMAIN \
   --entry-path /metrica \
@@ -271,7 +271,7 @@ ping example.com
 Сначала скачайте install bundle на сервер:
 
 ```bash
-curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.2/intellion-metrica-install-bundle-v0.2.2.tar.gz
+curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.3/intellion-metrica-install-bundle-v0.2.3.tar.gz
 ```
 
 Этот bundle уже включает:
@@ -286,8 +286,8 @@ curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.
 Распакуйте архив и перейдите в каталог:
 
 ```bash
-tar -xzf intellion-metrica-install-bundle-v0.2.2.tar.gz
-cd intellion-metrica-install-bundle-v0.2.2
+tar -xzf intellion-metrica-install-bundle-v0.2.3.tar.gz
+cd intellion-metrica-install-bundle-v0.2.3
 ```
 
 Запустите установку:
@@ -304,7 +304,7 @@ sudo bash ./scripts/install_metrica.sh \
 ### Вариант 2. По прямой ссылке на установщик
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.2/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.3/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain example.com \
   --entry-path /metrica \
@@ -332,7 +332,7 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 ### Пример для поддомена
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.2/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.3/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-subdomain \
   --domain analytics.example.com \
   --installation-name "Example Analytics" \

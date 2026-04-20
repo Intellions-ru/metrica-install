@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.2.2"
+DEFAULT_IMAGE_VERSION="v0.2.3"
 DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
@@ -778,9 +778,13 @@ prepare_install_tree() {
   if [[ -f "$BUNDLE_ROOT/scripts/issue_metrica_entitlement.mjs" ]]; then
     cp "$BUNDLE_ROOT/scripts/issue_metrica_entitlement.mjs" "$INSTALL_DIR/scripts/issue_metrica_entitlement.mjs"
   fi
+  if [[ -f "$BUNDLE_ROOT/scripts/send-max-digest-host.py" ]]; then
+    cp "$BUNDLE_ROOT/scripts/send-max-digest-host.py" "$INSTALL_DIR/scripts/send-max-digest-host.py"
+  fi
   chmod 700 "$INSTALL_DIR/scripts/install_metrica.sh"
   [[ -f "$INSTALL_DIR/scripts/preflight_metrica.sh" ]] && chmod 700 "$INSTALL_DIR/scripts/preflight_metrica.sh"
   [[ -f "$INSTALL_DIR/scripts/issue_metrica_entitlement.mjs" ]] && chmod 700 "$INSTALL_DIR/scripts/issue_metrica_entitlement.mjs"
+  [[ -f "$INSTALL_DIR/scripts/send-max-digest-host.py" ]] && chmod 700 "$INSTALL_DIR/scripts/send-max-digest-host.py"
 
   DB_PASSWORD="${DB_PASSWORD:-$(random_alnum 24)}"
   BOOTSTRAP_TOKEN="$(random_alnum 48)"
@@ -790,9 +794,9 @@ prepare_install_tree() {
   INSTALLATION_ID="${INSTALLATION_ID:-$(cat /proc/sys/kernel/random/uuid)}"
   ALLOWED_ORIGIN="https://${PUBLIC_HOST}"
   if [[ -n "$MAX_BOT_TOKEN" ]]; then
-    MAX_REPORT_ENABLED="true"
+    MAX_REPORT_ENABLED="false"
     MAX_REPORT_DELIVERY_MODE="bot_api"
-    MAX_MODE="bot_api"
+    MAX_MODE="host_timer"
   else
     MAX_REPORT_ENABLED="false"
     MAX_REPORT_DELIVERY_MODE="stdout"
@@ -833,6 +837,71 @@ EOF
     chmod 600 "$INSTALL_DIR/state/installation-entitlement.jwt"
   fi
 
+}
+
+systemd_available() {
+  command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
+}
+
+install_max_digest_host_timer() {
+  [[ -n "$MAX_BOT_TOKEN" ]] || return 0
+
+  if [[ ! -f "$INSTALL_DIR/scripts/send-max-digest-host.py" ]]; then
+    warn "MAX host digest fallback script is missing in install tree."
+    return 0
+  fi
+
+  if ! have_command python3; then
+    warn "python3 is not available, so MAX host digest timer was not configured."
+    return 0
+  fi
+
+  local runtime_systemd_dir="$INSTALL_DIR/runtime/systemd"
+  local python_bin
+  python_bin="$(command -v python3)"
+  mkdir -p "$runtime_systemd_dir"
+
+  cat >"$runtime_systemd_dir/intellion-metrica-max-digest-host.service" <<EOF
+[Unit]
+Description=Intellion Metrica MAX Digest Host Fallback
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$INSTALL_DIR
+Environment=MAX_DIGEST_WORKER_CONTAINER=intellion-metrica-worker
+Environment=MAX_DIGEST_DB_CONTAINER=intellion-metrica-db
+ExecStart=$python_bin $INSTALL_DIR/scripts/send-max-digest-host.py
+EOF
+
+  cat >"$runtime_systemd_dir/intellion-metrica-max-digest-host.timer" <<'EOF'
+[Unit]
+Description=Run Intellion Metrica MAX Digest Host Fallback every 5 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/5:00
+Persistent=true
+Unit=intellion-metrica-max-digest-host.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  chmod 600 \
+    "$runtime_systemd_dir/intellion-metrica-max-digest-host.service" \
+    "$runtime_systemd_dir/intellion-metrica-max-digest-host.timer"
+
+  if ! systemd_available || [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    warn "MAX host digest timer files were generated in $runtime_systemd_dir. Install them manually if you want automatic MAX digests on this host."
+    return 0
+  fi
+
+  cp "$runtime_systemd_dir/intellion-metrica-max-digest-host.service" /etc/systemd/system/intellion-metrica-max-digest-host.service
+  cp "$runtime_systemd_dir/intellion-metrica-max-digest-host.timer" /etc/systemd/system/intellion-metrica-max-digest-host.timer
+  systemctl daemon-reload
+  systemctl enable --now intellion-metrica-max-digest-host.timer >/dev/null 2>&1 || \
+    warn "Failed to enable intellion-metrica-max-digest-host.timer automatically."
 }
 
 compose() {
@@ -1045,7 +1114,7 @@ post_install_smoke() {
 }
 
 write_final_report() {
-  local credentials_path install_status_dir status_text panel_url login_url entry_url internal_panel_url next_step_one
+  local credentials_path install_status_dir status_text panel_url login_url entry_url internal_panel_url next_step_one max_digest_mode
   local activation_path
   install_status_dir="$INSTALL_DIR/artifacts/install/${BOOT_TS}-one-command-install"
   mkdir -p "$install_status_dir"
@@ -1069,6 +1138,11 @@ write_final_report() {
 
   if [[ "${#WARNINGS[@]}" -gt 0 ]]; then
     FINAL_STATUS="passed_with_warnings"
+  fi
+  if [[ -n "$MAX_BOT_TOKEN" ]]; then
+    max_digest_mode="host_timer"
+  else
+    max_digest_mode="disabled"
   fi
 
   credentials_path=""
@@ -1111,6 +1185,7 @@ write_final_report() {
   "logPath": "$(json_escape "$FINAL_LOG_PATH")",
   "serviceFilesPath": "$(json_escape "$INSTALL_DIR")",
   "maxBotConfigured": $( [[ -n "$MAX_BOT_TOKEN" ]] && printf 'true' || printf 'false' ),
+  "maxDigestMode": "$(json_escape "$max_digest_mode")",
   "warnings": [
 $(for item in "${WARNINGS[@]}"; do printf '    "%s"\n' "$(json_escape "$item")"; done | sed '$!s/$/,/')
   ]
@@ -1136,6 +1211,7 @@ Installation ID: ${INSTALLATION_ID}
 Ссылка активации владельца: ${OWNER_ACTIVATION_URL:-не создана}
 Статус entitlement: ${FINAL_ENTITLEMENT_STATUS}
 MAX target intent: ${MAX_TARGET_KIND}${MAX_TARGET_VALUE:+:${MAX_TARGET_VALUE}}
+Режим MAX digest: ${max_digest_mode}
 Служебный каталог: ${INSTALL_DIR}
 Журнал установки: ${FINAL_LOG_PATH}
 Каталог proxy-шаблонов: ${INSTALL_DIR}/runtime/proxy
@@ -1176,6 +1252,7 @@ main() {
 
   prepare_install_tree
   deploy_stack
+  install_max_digest_host_timer
   bootstrap_owner
   post_install_smoke
   log "Installation completed."
