@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-INSTALLER_VERSION="v1"
+INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.1.0"
+DEFAULT_IMAGE_VERSION="v0.2.0"
 DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
@@ -28,6 +28,7 @@ IMAGE_VERSION="$DEFAULT_IMAGE_VERSION"
 METRICA_API_IMAGE=""
 METRICA_WORKER_IMAGE=""
 METRICA_CONTROL_PLANE_IMAGE=""
+METRICA_CONTROL_PLANE_PATH_IMAGE=""
 ENTITLEMENT_FILE=""
 DB_NAME="intellion_metrica"
 DB_USER="metrica"
@@ -50,6 +51,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" 2>/dev/null && pwd || pwd)"
 LOCAL_ANALYTICS_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd || true)"
 
 BOOT_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+BOOT_ISO_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 BOOT_LOG_DIR="/tmp/intellion-metrica-install"
 mkdir -p "$BOOT_LOG_DIR"
 LOG_FILE="$BOOT_LOG_DIR/install-${BOOT_TS}.log"
@@ -82,7 +84,7 @@ Usage:
   install_metrica.sh [options]
 
 Main modes:
-  --publish-mode subdomain|path
+  --publish-mode attach-path|attach-subdomain|standalone
   --domain <host>
   --installation-name <name>
   --owner-email <email>
@@ -96,7 +98,7 @@ Optional:
   --api-image <ref>
   --worker-image <ref>
   --control-plane-image <ref>
-  --entry-path </metrica>
+  --entry-path </metrica>        # for attach-path only, default /metrica
   --entitlement-file <path>
   --acme-email <email>
   --max-bot-token <token>
@@ -113,14 +115,14 @@ Optional:
 
 Examples:
   sudo bash ./scripts/install_metrica.sh \
-    --publish-mode subdomain \
+    --publish-mode attach-subdomain \
     --domain analytics.example.com \
     --installation-name "Example Analytics" \
     --owner-email owner@example.com
 
   curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/install_metrica.sh \
     | sudo bash -s -- \
-      --publish-mode path \
+      --publish-mode attach-path \
       --domain example.com \
       --entry-path /metrica \
       --installation-name "Example Analytics" \
@@ -142,14 +144,48 @@ die() {
   exit 1
 }
 
-require_root() {
-  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    die "Installer must run as root. Use sudo bash install_metrica.sh ..."
-  fi
-}
-
 have_command() {
   command -v "$1" >/dev/null 2>&1
+}
+
+image_ref_available() {
+  local image_ref="$1"
+  docker manifest inspect "$image_ref" >/dev/null 2>&1 \
+    || docker image inspect "$image_ref" >/dev/null 2>&1
+}
+
+image_ref_remote_available() {
+  local image_ref="$1"
+  docker manifest inspect "$image_ref" >/dev/null 2>&1
+}
+
+image_ref_local_available() {
+  local image_ref="$1"
+  docker image inspect "$image_ref" >/dev/null 2>&1
+}
+
+ensure_runtime_permissions() {
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    return
+  fi
+
+  local docker_ready=0
+  if have_command docker && docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    docker_ready=1
+  fi
+
+  if [[ "$AUTO_INSTALL_DOCKER" -eq 1 && "$docker_ready" -eq 0 ]]; then
+    die "Root or sudo is required because Docker is not ready for the current user."
+  fi
+
+  mkdir -p "$INSTALL_DIR" 2>/dev/null || die "Install directory is not writable: $INSTALL_DIR. Use sudo or choose a writable --install-dir."
+  [[ -w "$INSTALL_DIR" ]] || die "Install directory is not writable: $INSTALL_DIR. Use sudo or choose a writable --install-dir."
+
+  if [[ "$docker_ready" -ne 1 ]]; then
+    die "Docker is installed but the current user cannot access it. Use sudo or add the user to the docker group."
+  fi
+
+  warn "Installer is running without root. Docker is already available and install directory is writable."
 }
 
 json_escape() {
@@ -167,7 +203,11 @@ random_hex() {
 
 random_alnum() {
   local length="$1"
-  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$length"
+  local value
+  set +o pipefail
+  value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$length")"
+  set -o pipefail
+  printf '%s' "$value"
 }
 
 fetch_url() {
@@ -219,6 +259,57 @@ validate_entry_path() {
   [[ "$1" =~ ^/[-A-Za-z0-9/_]+$ ]]
 }
 
+normalize_publish_mode() {
+  case "$1" in
+    path|attach-path)
+      printf 'attach-path'
+      ;;
+    subdomain|attach-subdomain)
+      printf 'attach-subdomain'
+      ;;
+    managed|standalone)
+      printf 'standalone'
+      ;;
+    *)
+      printf '%s' "$1"
+      ;;
+  esac
+}
+
+is_attach_mode() {
+  [[ "$PUBLISH_MODE" == "attach-path" || "$PUBLISH_MODE" == "attach-subdomain" ]]
+}
+
+control_plane_base_path() {
+  if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
+    printf '%s' "$ENTRY_PATH"
+  else
+    printf ''
+  fi
+}
+
+control_plane_local_path() {
+  local suffix="$1"
+  printf '%s%s' "$(control_plane_base_path)" "$suffix"
+}
+
+control_plane_local_url() {
+  local suffix="$1"
+  printf 'http://127.0.0.1:%s%s' "$CONTROL_PLANE_PORT" "$(control_plane_local_path "$suffix")"
+}
+
+control_plane_public_root_url() {
+  printf 'https://%s%s' "$PUBLIC_HOST" "$(control_plane_base_path)"
+}
+
+control_plane_public_referer() {
+  if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
+    printf 'https://%s%s/ru/analytics' "$PUBLIC_HOST" "$ENTRY_PATH"
+  else
+    printf 'https://%s/ru/analytics' "$PUBLIC_HOST"
+  fi
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -268,6 +359,10 @@ parse_args() {
         ;;
       --control-plane-image)
         METRICA_CONTROL_PLANE_IMAGE="${2:-}"
+        shift 2
+        ;;
+      --control-plane-path-image)
+        METRICA_CONTROL_PLANE_PATH_IMAGE="${2:-}"
         shift 2
         ;;
       --entry-path)
@@ -335,9 +430,11 @@ parse_args() {
 
 collect_inputs() {
   if [[ -z "$PUBLISH_MODE" && "$NON_INTERACTIVE" -eq 0 ]]; then
-    read -r -p "Publication mode (subdomain/path) [subdomain]: " PUBLISH_MODE || true
-    PUBLISH_MODE="${PUBLISH_MODE:-subdomain}"
+    read -r -p "Publication mode (attach-path/attach-subdomain/standalone) [attach-path]: " PUBLISH_MODE || true
+    PUBLISH_MODE="${PUBLISH_MODE:-attach-path}"
   fi
+
+  PUBLISH_MODE="$(normalize_publish_mode "$PUBLISH_MODE")"
 
   prompt_value PUBLIC_HOST "Public domain for Metrica"
   prompt_value INSTALLATION_NAME "Installation name"
@@ -353,12 +450,13 @@ collect_inputs() {
     fi
   fi
 
-  if [[ "$PUBLISH_MODE" == "path" ]]; then
+  if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
     prompt_value ENTRY_PATH "Entry path on the main domain" "$ENTRY_PATH"
   fi
 
   [[ -n "$PUBLISH_MODE" ]] || die "Publication mode is required."
-  [[ "$PUBLISH_MODE" == "subdomain" || "$PUBLISH_MODE" == "path" ]] || die "Publication mode must be subdomain or path."
+  [[ "$PUBLISH_MODE" == "attach-path" || "$PUBLISH_MODE" == "attach-subdomain" || "$PUBLISH_MODE" == "standalone" ]] \
+    || die "Publication mode must be attach-path, attach-subdomain, or standalone."
   [[ -n "$PUBLIC_HOST" ]] || die "Public domain is required."
   validate_host "$PUBLIC_HOST" || die "Invalid public domain: $PUBLIC_HOST"
   [[ -n "$INSTALLATION_NAME" ]] || die "Installation name is required."
@@ -367,6 +465,9 @@ collect_inputs() {
   [[ -n "$ACME_EMAIL" ]] || die "TLS contact email is required."
   validate_email "$ACME_EMAIL" || die "Invalid TLS contact email: $ACME_EMAIL"
   validate_entry_path "$ENTRY_PATH" || die "Invalid entry path: $ENTRY_PATH"
+  if [[ "$PUBLISH_MODE" == "attach-path" && "$ENTRY_PATH" != "/metrica" ]]; then
+    die "attach-path currently supports the product base path /metrica only."
+  fi
   [[ -z "$ENTITLEMENT_FILE" || -f "$ENTITLEMENT_FILE" ]] || die "Entitlement file was not found: $ENTITLEMENT_FILE"
   [[ "$MAX_TARGET_KIND" == "none" || "$MAX_TARGET_KIND" == "user" || "$MAX_TARGET_KIND" == "chat" ]] || die "MAX target kind must be none, user or chat."
   if [[ "$MAX_TARGET_KIND" != "none" && -z "$MAX_TARGET_VALUE" ]]; then
@@ -381,8 +482,15 @@ resolve_image_refs() {
   if [[ -z "$METRICA_WORKER_IMAGE" ]]; then
     METRICA_WORKER_IMAGE="${IMAGE_REGISTRY}/intellion-metrica-worker:${IMAGE_VERSION}"
   fi
+  if [[ -z "$METRICA_CONTROL_PLANE_PATH_IMAGE" ]]; then
+    METRICA_CONTROL_PLANE_PATH_IMAGE="${IMAGE_REGISTRY}/intellion-metrica-control-plane-path:${IMAGE_VERSION}"
+  fi
   if [[ -z "$METRICA_CONTROL_PLANE_IMAGE" ]]; then
-    METRICA_CONTROL_PLANE_IMAGE="${IMAGE_REGISTRY}/intellion-metrica-control-plane:${IMAGE_VERSION}"
+    if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
+      METRICA_CONTROL_PLANE_IMAGE="$METRICA_CONTROL_PLANE_PATH_IMAGE"
+    else
+      METRICA_CONTROL_PLANE_IMAGE="${IMAGE_REGISTRY}/intellion-metrica-control-plane:${IMAGE_VERSION}"
+    fi
   fi
 }
 
@@ -411,6 +519,7 @@ install_fetch_tool() {
 
 install_docker_if_needed() {
   if have_command docker && docker compose version >/dev/null 2>&1; then
+    docker info >/dev/null 2>&1 || die "Docker is installed but the current user cannot access it."
     return
   fi
 
@@ -441,7 +550,7 @@ preflight_checks() {
   log "Running preflight checks."
 
   [[ "$(uname -s)" == "Linux" ]] || die "This installer supports Linux only."
-  require_root
+  ensure_runtime_permissions
 
   local arch
   arch="$(uname -m)"
@@ -482,11 +591,13 @@ preflight_checks() {
   install_fetch_tool
   install_docker_if_needed
 
-  if port_is_busy 80; then
-    die "Port 80 is already in use."
-  fi
-  if port_is_busy 443; then
-    die "Port 443 is already in use."
+  if [[ "$PUBLISH_MODE" == "standalone" ]]; then
+    if port_is_busy 80; then
+      die "Port 80 is already in use."
+    fi
+    if port_is_busy 443; then
+      die "Port 443 is already in use."
+    fi
   fi
   if port_is_busy "$CONTROL_PLANE_PORT"; then
     die "Local control-plane port ${CONTROL_PLANE_PORT} is already in use."
@@ -513,13 +624,13 @@ preflight_checks() {
     warn "DNS readiness check is skipped."
   fi
 
-  if ! docker manifest inspect "$METRICA_API_IMAGE" >/dev/null 2>&1; then
+  if ! image_ref_available "$METRICA_API_IMAGE"; then
     die "Failed to reach image registry or image ref is invalid: $METRICA_API_IMAGE"
   fi
-  if ! docker manifest inspect "$METRICA_WORKER_IMAGE" >/dev/null 2>&1; then
+  if ! image_ref_available "$METRICA_WORKER_IMAGE"; then
     die "Failed to reach image registry or image ref is invalid: $METRICA_WORKER_IMAGE"
   fi
-  if ! docker manifest inspect "$METRICA_CONTROL_PLANE_IMAGE" >/dev/null 2>&1; then
+  if ! image_ref_available "$METRICA_CONTROL_PLANE_IMAGE"; then
     die "Failed to reach image registry or image ref is invalid: $METRICA_CONTROL_PLANE_IMAGE"
   fi
 
@@ -577,6 +688,7 @@ render_template() {
   rendered="$(printf '%s' "$rendered" | sed "s|{{CSRF_SECRET}}|$(escape_sed "$CSRF_SECRET")|g")"
   rendered="$(printf '%s' "$rendered" | sed "s|{{ALLOWED_ORIGINS}}|$(escape_sed "$ALLOWED_ORIGIN")|g")"
   rendered="$(printf '%s' "$rendered" | sed "s|{{CONTROL_PLANE_PORT}}|$(escape_sed "$CONTROL_PLANE_PORT")|g")"
+  rendered="$(printf '%s' "$rendered" | sed "s|{{CONTROL_PLANE_HEALTH_PATH}}|$(escape_sed "$(control_plane_local_path "/api/health")")|g")"
   rendered="$(printf '%s' "$rendered" | sed "s|{{MAX_BOT_TOKEN}}|$(escape_sed "$MAX_BOT_TOKEN")|g")"
   rendered="$(printf '%s' "$rendered" | sed "s|{{MAX_WEBHOOK_SECRET}}|$(escape_sed "$MAX_WEBHOOK_SECRET")|g")"
   rendered="$(printf '%s' "$rendered" | sed "s|{{MAX_REPORT_DELIVERY_MODE}}|$(escape_sed "$MAX_REPORT_DELIVERY_MODE")|g")"
@@ -593,6 +705,45 @@ render_template() {
   rendered="$(printf '%s' "$rendered" | sed "s|{{MAX_TARGET_VALUE}}|$(escape_sed "$MAX_TARGET_VALUE")|g")"
 
   printf '%s' "$rendered" >"$destination"
+}
+
+write_proxy_templates() {
+  mkdir -p "$INSTALL_DIR/runtime/proxy/nginx" "$INSTALL_DIR/runtime/proxy/caddy"
+
+  if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
+    render_template "$BUNDLE_ROOT/install/nginx_attach_path_v1.conf.tpl" \
+      "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf"
+    render_template "$BUNDLE_ROOT/install/caddy_attach_path_v1.tpl" \
+      "$INSTALL_DIR/runtime/proxy/caddy/attach-path.Caddyfile"
+  elif [[ "$PUBLISH_MODE" == "attach-subdomain" ]]; then
+    render_template "$BUNDLE_ROOT/install/nginx_attach_subdomain_v1.conf.tpl" \
+      "$INSTALL_DIR/runtime/proxy/nginx/attach-subdomain.conf"
+    render_template "$BUNDLE_ROOT/install/caddy_attach_subdomain_v1.tpl" \
+      "$INSTALL_DIR/runtime/proxy/caddy/attach-subdomain.Caddyfile"
+  fi
+
+  if is_attach_mode; then
+    cat >"$INSTALL_DIR/runtime/proxy/README.txt" <<EOF
+Интеллион Метрика развернута во внутреннем режиме и не занимает 80/443.
+
+Режим публикации: ${PUBLISH_MODE}
+Домен: ${PUBLIC_HOST}
+Точка входа: $(control_plane_public_root_url)
+Локальный порт control-plane: ${CONTROL_PLANE_PORT}
+
+Готовые шаблоны:
+- nginx: $INSTALL_DIR/runtime/proxy/nginx
+- caddy: $INSTALL_DIR/runtime/proxy/caddy
+
+Что сделать дальше:
+1. Выберите nginx или caddy.
+2. Возьмите соответствующий шаблон для режима ${PUBLISH_MODE}.
+3. Подключите его в существующий reverse proxy.
+4. Перезагрузите proxy.
+5. Откройте $(control_plane_public_root_url)
+EOF
+    chmod 600 "$INSTALL_DIR/runtime/proxy/README.txt"
+  fi
 }
 
 prepare_install_tree() {
@@ -634,11 +785,10 @@ prepare_install_tree() {
   render_template "$BUNDLE_ROOT/install/install.env.template" "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/.env"
 
-  if [[ "$PUBLISH_MODE" == "subdomain" ]]; then
-    render_template "$BUNDLE_ROOT/install/Caddyfile.subdomain.tpl" "$INSTALL_DIR/runtime/Caddyfile"
-  else
-    render_template "$BUNDLE_ROOT/install/Caddyfile.path.tpl" "$INSTALL_DIR/runtime/Caddyfile"
+  if [[ "$PUBLISH_MODE" == "standalone" ]]; then
+    render_template "$BUNDLE_ROOT/install/Caddyfile.standalone.tpl" "$INSTALL_DIR/runtime/Caddyfile"
   fi
+  write_proxy_templates
 
   cat >"$INSTALL_DIR/state/installation-identity.json" <<EOF
 {
@@ -651,7 +801,7 @@ prepare_install_tree() {
   "publicHost": "$(json_escape "$PUBLIC_HOST")",
   "entryPath": "$(json_escape "$ENTRY_PATH")",
   "productVersion": "$(json_escape "$IMAGE_VERSION")",
-  "issueTime": "$(json_escape "$BOOT_TS")",
+  "issueTime": "$(json_escape "$BOOT_ISO_TS")",
   "activationTime": null,
   "issuer": "intellions",
   "issuedBy": "install_metrica.sh",
@@ -669,7 +819,11 @@ EOF
 }
 
 compose() {
-  docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$INSTALL_DIR/.env" "$@"
+  local args=(docker compose -f "$INSTALL_DIR/docker-compose.yml" --env-file "$INSTALL_DIR/.env")
+  if [[ "$PUBLISH_MODE" == "standalone" ]]; then
+    args+=(--profile standalone)
+  fi
+  "${args[@]}" "$@"
 }
 
 wait_for_container_health() {
@@ -692,11 +846,32 @@ wait_for_container_health() {
 }
 
 deploy_stack() {
-  log "Pulling images."
-  compose pull metrica-db metrica-migrate metrica-api metrica-worker metrica-control-plane metrica-proxy
+  local services=(metrica-db metrica-migrate metrica-api metrica-worker metrica-control-plane)
+  local images=("postgres:16-alpine" "$METRICA_API_IMAGE" "$METRICA_WORKER_IMAGE" "$METRICA_CONTROL_PLANE_IMAGE")
+  local image seen_images=()
+  if [[ "$PUBLISH_MODE" == "standalone" ]]; then
+    services+=(metrica-proxy)
+    images+=("caddy:2.10-alpine")
+  fi
+
+  log "Preparing images."
+  for image in "${images[@]}"; do
+    if printf '%s\n' "${seen_images[@]}" | grep -Fxq "$image"; then
+      continue
+    fi
+    seen_images+=("$image")
+
+    if image_ref_remote_available "$image"; then
+      docker pull "$image" >/dev/null
+    elif image_ref_local_available "$image"; then
+      log "Using local image $image"
+    else
+      die "Image ref is unavailable: $image"
+    fi
+  done
 
   log "Starting Metrica stack."
-  compose up -d metrica-db metrica-migrate metrica-api metrica-worker metrica-control-plane metrica-proxy
+  compose up -d "${services[@]}"
 
   wait_for_container_health intellion-metrica-db 120 || die "Database container did not become healthy."
   wait_for_container_health intellion-metrica-api 180 || die "API container did not become healthy."
@@ -712,8 +887,8 @@ fetch_csrf_token() {
   local response token
   response="$(curl -fsS \
     -H "Origin: https://${PUBLIC_HOST}" \
-    -H "Referer: https://${PUBLIC_HOST}/ru/analytics" \
-    "http://127.0.0.1:${CONTROL_PLANE_PORT}/api/metrica/auth/csrf")"
+    -H "Referer: $(control_plane_public_referer)" \
+    "$(control_plane_local_url "/api/metrica/auth/csrf")")"
   token="$(printf '%s' "$response" | extract_json_value "csrfToken")"
   [[ -n "$token" ]] || die "Failed to obtain CSRF token from control-plane."
   printf '%s' "$token"
@@ -725,10 +900,12 @@ bootstrap_owner() {
   if [[ -n "$OWNER_PASSWORD" ]]; then
     bootstrap_mode="password"
   fi
-  if [[ "$PUBLISH_MODE" == "path" ]]; then
-    display_panel_url="https://${PUBLIC_HOST}${ENTRY_PATH}"
+  if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
+    display_panel_url="$(control_plane_public_root_url)"
+  elif [[ "$PUBLISH_MODE" == "attach-subdomain" ]]; then
+    display_panel_url="https://${PUBLIC_HOST}"
   else
-    display_panel_url="https://${PUBLIC_HOST}/ru/analytics"
+    display_panel_url="https://${PUBLIC_HOST}"
   fi
 
   csrf_token="$(fetch_csrf_token)"
@@ -748,12 +925,12 @@ bootstrap_owner() {
   body_file="$(mktemp)"
   http_code="$(curl -sS -o "$body_file" -w '%{http_code}' \
     -H "Origin: https://${PUBLIC_HOST}" \
-    -H "Referer: https://${PUBLIC_HOST}/ru/analytics" \
+    -H "Referer: $(control_plane_public_referer)" \
     -H 'Content-Type: application/json' \
     -H "x-intellion-metrica-csrf: ${csrf_token}" \
     -H "Cookie: intellion_metrica_csrf=${csrf_token}" \
     --data "$payload" \
-    "http://127.0.0.1:${CONTROL_PLANE_PORT}/api/metrica/auth/bootstrap")"
+    "$(control_plane_local_url "/api/metrica/auth/bootstrap")")"
 
   if [[ "$http_code" == "200" ]]; then
     if [[ "$bootstrap_mode" == "password" ]]; then
@@ -812,12 +989,12 @@ verify_owner_login() {
 
   http_code="$(curl -sS -o "$body_file" -w '%{http_code}' \
     -H "Origin: https://${PUBLIC_HOST}" \
-    -H "Referer: https://${PUBLIC_HOST}/ru/analytics" \
+    -H "Referer: $(control_plane_public_referer)" \
     -H 'Content-Type: application/json' \
     -H "x-intellion-metrica-csrf: ${csrf_token}" \
     -H "Cookie: intellion_metrica_csrf=${csrf_token}" \
     --data "$payload" \
-    "http://127.0.0.1:${CONTROL_PLANE_PORT}/api/metrica/auth/login")"
+    "$(control_plane_local_url "/api/metrica/auth/login")")"
 
   if [[ "$http_code" != "200" ]]; then
     warn "Owner login verification response body:"
@@ -833,15 +1010,18 @@ post_install_smoke() {
   local health_response
   log "Running post-install smoke checks."
 
-  health_response="$(curl -fsS "http://127.0.0.1:${CONTROL_PLANE_PORT}/api/health")" \
+  health_response="$(curl -fsS "$(control_plane_local_url "/api/health")")" \
     || die "Local control-plane health check failed."
   FINAL_ENTITLEMENT_STATUS="$(printf '%s' "$health_response" | extract_json_value "entitlementStatus")"
   FINAL_ENTITLEMENT_STATUS="${FINAL_ENTITLEMENT_STATUS:-unknown}"
 
-  if curl -kfsS --resolve "${PUBLIC_HOST}:443:127.0.0.1" "https://${PUBLIC_HOST}/api/health" >/dev/null; then
+  if [[ "$PUBLISH_MODE" == "standalone" ]] && \
+     curl -kfsS --resolve "${PUBLIC_HOST}:443:127.0.0.1" "https://${PUBLIC_HOST}/api/health" >/dev/null; then
     log "Public HTTPS health endpoint is reachable."
-  else
+  elif [[ "$PUBLISH_MODE" == "standalone" ]]; then
     warn "Public HTTPS health smoke did not pass yet. Internal health is healthy, but TLS/public routing still needs confirmation."
+  else
+    warn "Attach mode was installed without taking over 80/443. Apply the generated reverse-proxy config before checking the public URL."
   fi
 
   verify_owner_login
@@ -855,15 +1035,19 @@ write_final_report() {
   FINAL_LOG_PATH="$INSTALL_DIR/logs/install-${BOOT_TS}.log"
   cp "$LOG_FILE" "$FINAL_LOG_PATH"
 
-  internal_panel_url="https://${PUBLIC_HOST}/ru/analytics"
-  if [[ "$PUBLISH_MODE" == "path" ]]; then
-    entry_url="https://${PUBLIC_HOST}${ENTRY_PATH}"
+  internal_panel_url="$(control_plane_public_root_url)/ru/analytics"
+  if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
+    entry_url="$(control_plane_public_root_url)"
+    panel_url="$entry_url"
+    login_url="$entry_url"
+  elif [[ "$PUBLISH_MODE" == "attach-subdomain" ]]; then
+    entry_url="https://${PUBLIC_HOST}"
     panel_url="$entry_url"
     login_url="$entry_url"
   else
-    panel_url="$internal_panel_url"
-    login_url="$internal_panel_url"
-    entry_url="$internal_panel_url"
+    panel_url="https://${PUBLIC_HOST}"
+    login_url="$panel_url"
+    entry_url="$panel_url"
   fi
 
   if [[ "${#WARNINGS[@]}" -gt 0 ]]; then
@@ -880,6 +1064,8 @@ write_final_report() {
   fi
   if [[ -n "$OWNER_ACTIVATION_URL" ]]; then
     next_step_one="Откройте ссылку активации владельца: ${OWNER_ACTIVATION_URL}"
+  elif is_attach_mode; then
+    next_step_one="Примените proxy-конфиг из ${INSTALL_DIR}/runtime/proxy и откройте ${entry_url}"
   else
     next_step_one="Откройте ${entry_url} и войдите под владельцем"
   fi
@@ -904,6 +1090,7 @@ write_final_report() {
   "maxTargetKind": "$(json_escape "$MAX_TARGET_KIND")",
   "maxTargetValue": "$(json_escape "$MAX_TARGET_VALUE")",
   "installDir": "$(json_escape "$INSTALL_DIR")",
+  "proxyTemplatesPath": "$(json_escape "$INSTALL_DIR/runtime/proxy")",
   "logPath": "$(json_escape "$FINAL_LOG_PATH")",
   "serviceFilesPath": "$(json_escape "$INSTALL_DIR")",
   "maxBotConfigured": $( [[ -n "$MAX_BOT_TOKEN" ]] && printf 'true' || printf 'false' ),
@@ -934,6 +1121,7 @@ Installation ID: ${INSTALLATION_ID}
 MAX target intent: ${MAX_TARGET_KIND}${MAX_TARGET_VALUE:+:${MAX_TARGET_VALUE}}
 Служебный каталог: ${INSTALL_DIR}
 Журнал установки: ${FINAL_LOG_PATH}
+Каталог proxy-шаблонов: ${INSTALL_DIR}/runtime/proxy
 
 Следующий шаг:
 1. ${next_step_one}

@@ -1,24 +1,31 @@
 # Интеллион Метрика — Self-Hosted Install
 
-Публичный канал установки Интеллион Метрика.
+Публичный канал установки `Интеллион Метрика`.
 
-Что здесь лежит:
+Здесь лежит только то, что нужно клиенту для запуска:
+
 - `install_metrica.sh` — основной установщик
-- `README_SELF_HOSTED_INSTALL.md` — основная инструкция для self-hosted установки
-- `README_SELF_HOSTED_MANUAL_TESTS.md` — ручной чек-лист после установки
-- GitHub Releases — install bundle по версиям
+- `README_SELF_HOSTED_INSTALL.md` — основная инструкция
+- `README_SELF_HOSTED_MANUAL_TESTS.md` — ручная проверка после установки
+- GitHub Releases — versioned install bundle
 
-Базовая модель:
-- основной сценарий — тот же сервер и путь `/metrica`
-- поддомен — дополнительный вариант
-- отдельный сервер возможен, но не считается основным клиентским сценарием
+Основная модель публикации:
 
-Базовая команда:
+- основной режим — тот же сервер и путь `/metrica`
+- второй режим — отдельный поддомен
+- standalone — только дополнительный вариант
+
+Рекомендуемый старт:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.1.0/install_metrica.sh | sudo bash -s -- \
-  --publish-mode path \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.0/install_metrica.sh | sudo bash -s -- \
+  --publish-mode attach-path \
   --domain example.com \
   --entry-path /metrica \
-  --owner-email owner@example.com \
-  --installation-name "Example Analytics"
+  --installation-name "Example Analytics" \
+  --owner-email owner@example.com
 ```
+
+Если нужен полный buyer-facing путь со всеми шагами, открывайте:
+
+- `README_SELF_HOSTED_INSTALL.md`
