@@ -15,6 +15,66 @@
 
 - `README_SELF_HOSTED_MANUAL_TESTS.md`
 
+## Быстрый старт
+
+Если вы уже на сервере и готовы запускать установку, используйте этот путь.
+
+### Что нужно заменить в команде
+
+Перед запуском замените только эти значения:
+
+- `YOUR_DOMAIN` — домен клиента, где будет открываться Метрика
+- `YOUR INSTALLATION NAME` — понятное имя установки
+- `YOUR_EMAIL` — почта первого владельца
+
+Обычно эти параметры остаются как есть:
+
+- `--publish-mode attach-path`
+- `--entry-path /metrica`
+
+### Быстрый вариант через install bundle
+
+```bash
+curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.2/intellion-metrica-install-bundle-v0.2.2.tar.gz
+tar -xzf intellion-metrica-install-bundle-v0.2.2.tar.gz
+cd intellion-metrica-install-bundle-v0.2.2
+sudo bash ./scripts/install_metrica.sh \
+  --publish-mode attach-path \
+  --domain YOUR_DOMAIN \
+  --entry-path /metrica \
+  --installation-name "YOUR INSTALLATION NAME" \
+  --owner-email YOUR_EMAIL
+```
+
+### Быстрый вариант по прямой ссылке
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.2/install_metrica.sh | sudo bash -s -- \
+  --publish-mode attach-path \
+  --domain YOUR_DOMAIN \
+  --entry-path /metrica \
+  --installation-name "YOUR INSTALLATION NAME" \
+  --owner-email YOUR_EMAIL
+```
+
+Пример для реального клиента:
+
+```bash
+sudo bash ./scripts/install_metrica.sh \
+  --publish-mode attach-path \
+  --domain beauty-doc.pro \
+  --entry-path /metrica \
+  --installation-name "Beauty Doc Analytics" \
+  --owner-email owner@beauty-doc.pro
+```
+
+Что должно получиться:
+
+- installer завершится без критической ошибки;
+- на сервере появится `owner-activation.txt`;
+- Метрика будет готова к подключению через ваш `nginx` или `caddy`;
+- панель будет открываться по адресу вида `site.ru/metrica`.
+
 ## Что это за продукт
 
 `Интеллион Метрика` — self-hosted система аналитики сайта.

@@ -20,11 +20,17 @@
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.2/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
-  --domain example.com \
+  --domain YOUR_DOMAIN \
   --entry-path /metrica \
-  --installation-name "Example Analytics" \
-  --owner-email owner@example.com
+  --installation-name "YOUR INSTALLATION NAME" \
+  --owner-email YOUR_EMAIL
 ```
+
+Что заменить в команде:
+
+- `YOUR_DOMAIN` — домен клиента
+- `YOUR INSTALLATION NAME` — имя установки
+- `YOUR_EMAIL` — почта первого владельца
 
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
