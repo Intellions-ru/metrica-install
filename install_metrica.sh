@@ -7,7 +7,7 @@ DEFAULT_IMAGE_VERSION="v0.2.3"
 DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
-SOURCE_FALLBACK_BUNDLE_URL_BASE="https://codeload.github.com/intellions/intellions_io/tar.gz/refs/heads"
+SOURCE_FALLBACK_BUNDLE_URL_BASE="${SOURCE_FALLBACK_BUNDLE_URL_BASE:-}"
 MIN_MEMORY_MB=2048
 WARN_MEMORY_MB=4096
 MIN_DISK_GB=8
@@ -162,6 +162,45 @@ image_ref_remote_available() {
 image_ref_local_available() {
   local image_ref="$1"
   docker image inspect "$image_ref" >/dev/null 2>&1
+}
+
+fetch_bundle_archive() {
+  local destination="$1"
+  local release_url="$BUNDLE_URL"
+  local source_tag_url=""
+  local source_head_url=""
+
+  if [[ -z "$release_url" ]]; then
+    if [[ "$DEFAULT_PRODUCT_BUNDLE_URL_BASE" == *"/releases/download" ]]; then
+      release_url="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/${BUNDLE_REF}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
+    else
+      release_url="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
+    fi
+  fi
+
+  log "Downloading install bundle from $release_url"
+  if fetch_url "$release_url" "$destination"; then
+    return 0
+  fi
+
+  if [[ -z "$SOURCE_FALLBACK_BUNDLE_URL_BASE" ]]; then
+    return 1
+  fi
+
+  source_tag_url="${SOURCE_FALLBACK_BUNDLE_URL_BASE}/refs/tags/${BUNDLE_REF}"
+  source_head_url="${SOURCE_FALLBACK_BUNDLE_URL_BASE}/refs/heads/${BUNDLE_REF}"
+
+  warn "Product install bundle was not downloaded. Falling back to tag source bundle: $source_tag_url"
+  if fetch_url "$source_tag_url" "$destination"; then
+    return 0
+  fi
+
+  warn "Tag source bundle was not downloaded. Falling back to branch source bundle: $source_head_url"
+  if fetch_url "$source_head_url" "$destination"; then
+    return 0
+  fi
+
+  return 1
 }
 
 ensure_runtime_permissions() {
@@ -648,21 +687,7 @@ resolve_bundle_root() {
   DOWNLOADED_BUNDLE_DIR="$work_dir"
   archive="$work_dir/install-bundle.tar.gz"
 
-  if [[ -z "$BUNDLE_URL" ]]; then
-    if [[ "$DEFAULT_PRODUCT_BUNDLE_URL_BASE" == *"/releases/download" ]]; then
-      BUNDLE_URL="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/${BUNDLE_REF}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
-    else
-      BUNDLE_URL="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
-    fi
-  fi
-
-  log "Downloading install bundle from $BUNDLE_URL"
-  if ! fetch_url "$BUNDLE_URL" "$archive"; then
-    local fallback_url
-    fallback_url="${SOURCE_FALLBACK_BUNDLE_URL_BASE}/${BUNDLE_REF}"
-    warn "Product install bundle was not downloaded. Falling back to source bundle: $fallback_url"
-    fetch_url "$fallback_url" "$archive"
-  fi
+  fetch_bundle_archive "$archive" || die "Failed to download install bundle for ref: $BUNDLE_REF. If you need emergency source fallback, set SOURCE_FALLBACK_BUNDLE_URL_BASE explicitly."
   tar -xzf "$archive" -C "$work_dir"
 
   candidate="$(find "$work_dir" \( -path '*/install/docker-compose.install.yml' -o -path '*/intellions-analytics/install/docker-compose.install.yml' \) -print | head -n 1 || true)"
