@@ -103,6 +103,38 @@ require_root() {
   [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "Run uninstall_metrica.sh as root or via sudo."
 }
 
+trim_ascii_whitespace() {
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+load_dotenv_file() {
+  local env_file="${1:-}" line key value
+  [[ -n "$env_file" ]] || die "load_dotenv_file requires a file path."
+  [[ -f "$env_file" ]] || die "Env file was not found: $env_file"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -n "$line" ]] || continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" == *=* ]] || continue
+
+    key="$(trim_ascii_whitespace "${line%%=*}")"
+    value="${line#*=}"
+
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+
+    if [[ "$value" =~ ^\".*\"$ ]] || [[ "$value" =~ ^\'.*\'$ ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < "$env_file"
+}
+
 load_install_context() {
   INSTALL_ENV_FILE="$INSTALL_DIR/.env"
   MANAGED_STATE_FILE="$INSTALL_DIR/state/installer-managed.env"
@@ -110,8 +142,8 @@ load_install_context() {
   [[ -f "$INSTALL_ENV_FILE" ]] || die "Install env file was not found: $INSTALL_ENV_FILE"
   [[ -f "$INSTALL_DIR/docker-compose.yml" ]] || die "docker-compose.yml was not found in $INSTALL_DIR"
 
-  # shellcheck disable=SC1090
-  source "$INSTALL_ENV_FILE"
+  # Read docker-style env-file values as data, not as shell code.
+  load_dotenv_file "$INSTALL_ENV_FILE"
 
   if [[ -f "$MANAGED_STATE_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -310,4 +342,6 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
