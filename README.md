@@ -17,6 +17,9 @@
 
 Рекомендуемый старт:
 
+Используйте именно актуальную команду ниже.
+Старые теги вроде `v0.2.8`, `v0.2.9`, `v0.2.10` для новых установок не используйте.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash
 ```
