@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.2.11"
-DEFAULT_BUNDLE_REF="v0.2.11"
+DEFAULT_IMAGE_VERSION="v0.2.12"
+DEFAULT_BUNDLE_REF="v0.2.12"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
 DEFAULT_INSTALLER_HELPERS_URL_BASE="https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/scripts"
@@ -390,9 +390,9 @@ managed_proxy_end_marker() {
 
 control_plane_public_referer() {
   if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
-    printf 'https://%s%s/ru/analytics' "$PUBLIC_HOST" "$ENTRY_PATH"
+    printf 'https://%s%s/' "$PUBLIC_HOST" "$ENTRY_PATH"
   else
-    printf 'https://%s/ru/analytics' "$PUBLIC_HOST"
+    printf 'https://%s/' "$PUBLIC_HOST"
   fi
 }
 
@@ -1674,7 +1674,7 @@ write_final_report() {
   FINAL_LOG_PATH="$INSTALL_DIR/logs/install-${BOOT_TS}.log"
   cp "$LOG_FILE" "$FINAL_LOG_PATH"
 
-  internal_panel_url="$(control_plane_public_root_url)/ru/analytics"
+  internal_panel_url="$(control_plane_public_root_url)/"
   if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
     entry_url="$(control_plane_public_root_url)"
     panel_url="$entry_url"

@@ -21,7 +21,7 @@
 Старые теги вроде `v0.2.8`, `v0.2.9`, `v0.2.10` для новых установок не используйте.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.12/install_metrica.sh | sudo bash
 ```
 
 Installer сам спросит:
@@ -37,7 +37,7 @@ Installer сам спросит:
 Если нужно заранее передать значения без интерактивных вопросов:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.12/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain YOUR_DOMAIN \
   --entry-path /metrica \
@@ -83,7 +83,7 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
-- `intellion-metrica-install-bundle-v0.2.11.tar.gz`
+- `intellion-metrica-install-bundle-v0.2.12.tar.gz`
 
 Он уже включает product images, поэтому отдельный Docker registry login для обычной установки не нужен.
 
