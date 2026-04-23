@@ -4,7 +4,7 @@ set -Eeuo pipefail
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
 DEFAULT_IMAGE_VERSION="v0.2.3"
-DEFAULT_BUNDLE_REF="v0.2.8"
+DEFAULT_BUNDLE_REF="v0.2.9"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
 DEFAULT_INSTALLER_HELPERS_URL_BASE="https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/scripts"
@@ -70,11 +70,14 @@ OWNER_ACTIVATION_URL=""
 OWNER_ACTIVATION_PATH=""
 AUTO_ATTACH_PROXY_APPLIED=0
 AUTO_ATTACH_PROXY_KIND=""
+AUTO_ATTACH_PROXY_MODE=""
 AUTO_ATTACH_PROXY_TARGET_FILE=""
 AUTO_ATTACH_PROXY_SNIPPET=""
 AUTO_ATTACH_PROXY_INCLUDE_PATH=""
 AUTO_ATTACH_PROXY_CONTAINER_NAME=""
 AUTO_ATTACH_PROXY_CHECK_URL=""
+AUTO_ATTACH_PROXY_BLOCK_BEGIN=""
+AUTO_ATTACH_PROXY_BLOCK_END=""
 MANAGED_STATE_FILE=""
 MAX_DIGEST_TIMER_INSTALLED=0
 
@@ -371,6 +374,18 @@ control_plane_local_url() {
 
 control_plane_public_root_url() {
   printf 'https://%s%s' "$PUBLIC_HOST" "$(control_plane_base_path)"
+}
+
+managed_proxy_marker_id() {
+  slugify_identifier "${PUBLIC_HOST}-${ENTRY_PATH}-attach-path"
+}
+
+managed_proxy_begin_marker() {
+  printf '# BEGIN INTELLION METRICA AUTO ATTACH %s' "$(managed_proxy_marker_id)"
+}
+
+managed_proxy_end_marker() {
+  printf '# END INTELLION METRICA AUTO ATTACH %s' "$(managed_proxy_marker_id)"
 }
 
 control_plane_public_referer() {
@@ -832,11 +847,14 @@ ENTRY_PATH=$(printf '%q' "$ENTRY_PATH")
 AUTO_ATTACH_PROXY=$(printf '%q' "$AUTO_ATTACH_PROXY")
 AUTO_ATTACH_PROXY_APPLIED=$(printf '%q' "$AUTO_ATTACH_PROXY_APPLIED")
 AUTO_ATTACH_PROXY_KIND=$(printf '%q' "$AUTO_ATTACH_PROXY_KIND")
+AUTO_ATTACH_PROXY_MODE=$(printf '%q' "$AUTO_ATTACH_PROXY_MODE")
 AUTO_ATTACH_PROXY_TARGET_FILE=$(printf '%q' "$AUTO_ATTACH_PROXY_TARGET_FILE")
 AUTO_ATTACH_PROXY_SNIPPET=$(printf '%q' "$AUTO_ATTACH_PROXY_SNIPPET")
 AUTO_ATTACH_PROXY_INCLUDE_PATH=$(printf '%q' "$AUTO_ATTACH_PROXY_INCLUDE_PATH")
 AUTO_ATTACH_PROXY_CONTAINER_NAME=$(printf '%q' "$AUTO_ATTACH_PROXY_CONTAINER_NAME")
 AUTO_ATTACH_PROXY_CHECK_URL=$(printf '%q' "$AUTO_ATTACH_PROXY_CHECK_URL")
+AUTO_ATTACH_PROXY_BLOCK_BEGIN=$(printf '%q' "$AUTO_ATTACH_PROXY_BLOCK_BEGIN")
+AUTO_ATTACH_PROXY_BLOCK_END=$(printf '%q' "$AUTO_ATTACH_PROXY_BLOCK_END")
 MAX_DIGEST_TIMER_INSTALLED=$(printf '%q' "$MAX_DIGEST_TIMER_INSTALLED")
 EOF
   chmod 600 "$MANAGED_STATE_FILE"
@@ -955,6 +973,31 @@ resolve_docker_nginx_attach_paths() {
   printf '%s\n%s\n%s\n' "$target_file" "$snippet_host_dir/$snippet_name" "$snippet_include_path"
 }
 
+resolve_docker_nginx_inline_attach_target() {
+  local container_name="$1"
+  local mount_source mount_target target_file=""
+  local -a search_roots=() find_args=()
+
+  while IFS=$'\t' read -r mount_source mount_target; do
+    [[ -n "$mount_source" && -n "$mount_target" ]] || continue
+    if [[ "$mount_target" == /etc/nginx/*.conf && -f "$mount_source" ]]; then
+      search_roots+=("$mount_source")
+    fi
+  done < <(docker_nginx_mounts "$container_name")
+
+  [[ "${#search_roots[@]}" -gt 0 ]] || {
+    printf '%s\n' "docker nginx container $container_name does not expose a bind-mounted nginx.conf file" >&2
+    return 1
+  }
+
+  find_args=(find-target --host "$PUBLIC_HOST")
+  for mount_source in "${search_roots[@]}"; do
+    find_args+=(--search-root "$mount_source")
+  done
+
+  python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" "${find_args[@]}"
+}
+
 try_apply_nginx_attach() {
   local target_file="$1"
   local snippet_host_path="$2"
@@ -1016,13 +1059,71 @@ try_apply_nginx_attach() {
 
   AUTO_ATTACH_PROXY_APPLIED=1
   AUTO_ATTACH_PROXY_KIND="$kind"
+  AUTO_ATTACH_PROXY_MODE="include"
   AUTO_ATTACH_PROXY_TARGET_FILE="$target_file"
   AUTO_ATTACH_PROXY_SNIPPET="$snippet_host_path"
   AUTO_ATTACH_PROXY_INCLUDE_PATH="$include_path"
   AUTO_ATTACH_PROXY_CONTAINER_NAME="$container_name"
   AUTO_ATTACH_PROXY_CHECK_URL="$(control_plane_public_root_url)"
+  AUTO_ATTACH_PROXY_BLOCK_BEGIN=""
+  AUTO_ATTACH_PROXY_BLOCK_END=""
   persist_managed_state
   log "nginx auto-attach applied (${insert_status}) for $(control_plane_public_root_url)"
+  return 0
+}
+
+try_apply_nginx_attach_inline() {
+  local target_file="$1"
+  local validate_cmd="$2"
+  local reload_cmd="$3"
+  local kind="$4"
+  local container_name="${5:-}"
+  local begin_marker="$6"
+  local end_marker="$7"
+  local backup_dir backup_path insert_status=""
+
+  backup_dir="$INSTALL_DIR/artifacts/install/${BOOT_TS}-one-command-install/nginx-backups"
+  backup_path="$backup_dir/$(basename "$target_file").bak"
+
+  mkdir -p "$backup_dir"
+  cp "$target_file" "$backup_path"
+
+  if ! insert_status="$(
+    python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
+      insert-block \
+      --host "$PUBLIC_HOST" \
+      --file "$target_file" \
+      --block-file "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf" \
+      --begin-marker "$begin_marker" \
+      --end-marker "$end_marker"
+  )"; then
+    return 1
+  fi
+
+  if ! eval "$validate_cmd" >/dev/null 2>&1; then
+    cp "$backup_path" "$target_file"
+    return 1
+  fi
+
+  if ! eval "$reload_cmd" >/dev/null 2>&1; then
+    if [[ "$insert_status" != "already-present" ]]; then
+      cp "$backup_path" "$target_file"
+    fi
+    return 1
+  fi
+
+  AUTO_ATTACH_PROXY_APPLIED=1
+  AUTO_ATTACH_PROXY_KIND="$kind"
+  AUTO_ATTACH_PROXY_MODE="inline"
+  AUTO_ATTACH_PROXY_TARGET_FILE="$target_file"
+  AUTO_ATTACH_PROXY_SNIPPET=""
+  AUTO_ATTACH_PROXY_INCLUDE_PATH=""
+  AUTO_ATTACH_PROXY_CONTAINER_NAME="$container_name"
+  AUTO_ATTACH_PROXY_CHECK_URL="$(control_plane_public_root_url)"
+  AUTO_ATTACH_PROXY_BLOCK_BEGIN="$begin_marker"
+  AUTO_ATTACH_PROXY_BLOCK_END="$end_marker"
+  persist_managed_state
+  log "nginx auto-attach applied (${insert_status}, inline) for $(control_plane_public_root_url)"
   return 0
 }
 
@@ -1047,29 +1148,50 @@ try_auto_attach_host_nginx_path_proxy() {
 
 try_auto_attach_docker_nginx_path_proxy() {
   local container_name="" target_file="" snippet_host_path="" include_path="" resolved_paths=""
+  local begin_marker="" end_marker=""
   local err_file
   err_file="$(mktemp)"
   if ! container_name="$(find_docker_nginx_container 2>"$err_file")"; then
     rm -f "$err_file"
     return 1
   fi
-  if ! resolved_paths="$(resolve_docker_nginx_attach_paths "$container_name" 2>"$err_file")"; then
+  if resolved_paths="$(resolve_docker_nginx_attach_paths "$container_name" 2>"$err_file")"; then
     rm -f "$err_file"
-    return 1
-  fi
-  rm -f "$err_file"
-  target_file="$(printf '%s\n' "$resolved_paths" | sed -n '1p')"
-  snippet_host_path="$(printf '%s\n' "$resolved_paths" | sed -n '2p')"
-  include_path="$(printf '%s\n' "$resolved_paths" | sed -n '3p')"
+    target_file="$(printf '%s\n' "$resolved_paths" | sed -n '1p')"
+    snippet_host_path="$(printf '%s\n' "$resolved_paths" | sed -n '2p')"
+    include_path="$(printf '%s\n' "$resolved_paths" | sed -n '3p')"
 
-  try_apply_nginx_attach \
-    "$target_file" \
-    "$snippet_host_path" \
-    "$include_path" \
-    "docker exec $container_name nginx -t" \
-    "docker exec $container_name nginx -s reload" \
-    "docker-nginx" \
-    "$container_name"
+    if try_apply_nginx_attach \
+      "$target_file" \
+      "$snippet_host_path" \
+      "$include_path" \
+      "docker exec $container_name nginx -t" \
+      "docker exec $container_name nginx -s reload" \
+      "docker-nginx" \
+      "$container_name"; then
+      return 0
+    fi
+    err_file="$(mktemp)"
+  fi
+
+  # Some stacks mount a single nginx.conf file into the container instead of a config dir.
+  if target_file="$(resolve_docker_nginx_inline_attach_target "$container_name" 2>"$err_file")"; then
+    rm -f "$err_file"
+    begin_marker="$(managed_proxy_begin_marker)"
+    end_marker="$(managed_proxy_end_marker)"
+    try_apply_nginx_attach_inline \
+      "$target_file" \
+      "docker exec $container_name nginx -t" \
+      "docker exec $container_name nginx -s reload" \
+      "docker-nginx-inline" \
+      "$container_name" \
+      "$begin_marker" \
+      "$end_marker"
+    return $?
+  fi
+
+  rm -f "$err_file"
+  return 1
 }
 
 auto_attach_nginx_path_proxy() {

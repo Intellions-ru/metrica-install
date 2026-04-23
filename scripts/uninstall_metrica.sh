@@ -21,10 +21,13 @@ PUBLIC_HOST=""
 ENTRY_PATH=""
 AUTO_ATTACH_PROXY_APPLIED=0
 AUTO_ATTACH_PROXY_KIND=""
+AUTO_ATTACH_PROXY_MODE=""
 AUTO_ATTACH_PROXY_TARGET_FILE=""
 AUTO_ATTACH_PROXY_SNIPPET=""
 AUTO_ATTACH_PROXY_INCLUDE_PATH=""
 AUTO_ATTACH_PROXY_CONTAINER_NAME=""
+AUTO_ATTACH_PROXY_BLOCK_BEGIN=""
+AUTO_ATTACH_PROXY_BLOCK_END=""
 
 usage() {
   cat <<'EOF'
@@ -157,10 +160,13 @@ load_install_context() {
   ENTRY_PATH="${ENTRY_PATH:-/metrica}"
   AUTO_ATTACH_PROXY_APPLIED="${AUTO_ATTACH_PROXY_APPLIED:-0}"
   AUTO_ATTACH_PROXY_KIND="${AUTO_ATTACH_PROXY_KIND:-}"
+  AUTO_ATTACH_PROXY_MODE="${AUTO_ATTACH_PROXY_MODE:-include}"
   AUTO_ATTACH_PROXY_TARGET_FILE="${AUTO_ATTACH_PROXY_TARGET_FILE:-}"
   AUTO_ATTACH_PROXY_SNIPPET="${AUTO_ATTACH_PROXY_SNIPPET:-}"
   AUTO_ATTACH_PROXY_INCLUDE_PATH="${AUTO_ATTACH_PROXY_INCLUDE_PATH:-$AUTO_ATTACH_PROXY_SNIPPET}"
   AUTO_ATTACH_PROXY_CONTAINER_NAME="${AUTO_ATTACH_PROXY_CONTAINER_NAME:-}"
+  AUTO_ATTACH_PROXY_BLOCK_BEGIN="${AUTO_ATTACH_PROXY_BLOCK_BEGIN:-}"
+  AUTO_ATTACH_PROXY_BLOCK_END="${AUTO_ATTACH_PROXY_BLOCK_END:-}"
 }
 
 compose() {
@@ -254,7 +260,6 @@ backup_install_tree_if_needed() {
 remove_auto_managed_nginx_proxy() {
   [[ "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]] || return 0
   [[ -n "$AUTO_ATTACH_PROXY_TARGET_FILE" ]] || return 0
-  [[ -n "$AUTO_ATTACH_PROXY_SNIPPET" ]] || return 0
 
   if [[ ! -f "$AUTO_ATTACH_PROXY_TARGET_FILE" ]]; then
     warn "Managed nginx target file is missing: $AUTO_ATTACH_PROXY_TARGET_FILE"
@@ -265,12 +270,22 @@ remove_auto_managed_nginx_proxy() {
   mkdir -p "$UNINSTALL_BACKUP_DIR/nginx"
   cp "$AUTO_ATTACH_PROXY_TARGET_FILE" "$UNINSTALL_BACKUP_DIR/nginx/$(basename "$AUTO_ATTACH_PROXY_TARGET_FILE").bak"
 
-  python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
-    remove-include \
-    --file "$AUTO_ATTACH_PROXY_TARGET_FILE" \
-    --include-path "$AUTO_ATTACH_PROXY_INCLUDE_PATH" >/dev/null
+  if [[ "$AUTO_ATTACH_PROXY_MODE" == "inline" ]]; then
+    python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
+      remove-block \
+      --file "$AUTO_ATTACH_PROXY_TARGET_FILE" \
+      --begin-marker "$AUTO_ATTACH_PROXY_BLOCK_BEGIN" \
+      --end-marker "$AUTO_ATTACH_PROXY_BLOCK_END" >/dev/null
+  else
+    python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
+      remove-include \
+      --file "$AUTO_ATTACH_PROXY_TARGET_FILE" \
+      --include-path "$AUTO_ATTACH_PROXY_INCLUDE_PATH" >/dev/null
+  fi
 
-  rm -f "$AUTO_ATTACH_PROXY_SNIPPET"
+  if [[ -n "$AUTO_ATTACH_PROXY_SNIPPET" ]]; then
+    rm -f "$AUTO_ATTACH_PROXY_SNIPPET"
+  fi
 
   if [[ -n "$AUTO_ATTACH_PROXY_CONTAINER_NAME" ]]; then
     if docker exec "$AUTO_ATTACH_PROXY_CONTAINER_NAME" nginx -t >/dev/null 2>&1; then

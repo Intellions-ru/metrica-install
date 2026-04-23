@@ -103,6 +103,12 @@ def candidate_files(search_roots):
         root_path = Path(root)
         if not root_path.exists():
             continue
+        if root_path.is_file():
+            real_path = root_path.resolve()
+            if real_path not in seen:
+                seen.add(real_path)
+                results.append(real_path)
+            continue
         for path in sorted(root_path.iterdir()):
             if path.name.startswith("."):
                 continue
@@ -172,6 +178,63 @@ def remove_include(config_file: Path, include_path: str):
     return "removed"
 
 
+def render_managed_block(block_text: str, indent: str, begin_marker: str, end_marker: str):
+    rendered = [f"{indent}{begin_marker}\n"]
+    for line in block_text.splitlines():
+        if line.strip():
+            rendered.append(f"{indent}{line}\n")
+        else:
+            rendered.append("\n")
+    rendered.append(f"{indent}{end_marker}\n")
+    return rendered
+
+
+def insert_managed_block(
+    config_file: Path, host: str, block_file: Path, begin_marker: str, end_marker: str
+):
+    text = config_file.read_text(encoding="utf-8")
+    lines, blocks = parse_server_blocks(text)
+    chosen = choose_block(lines, blocks, host)
+    start, end = chosen
+    chosen_lines = lines[start : end + 1]
+
+    for line in chosen_lines:
+        stripped = line.strip()
+        if stripped == begin_marker or stripped == end_marker:
+            return "already-present"
+
+    closing_indent = re.match(r"^(\s*)", lines[end]).group(1)
+    block_indent = closing_indent + "  "
+    block_text = block_file.read_text(encoding="utf-8")
+    lines[end:end] = render_managed_block(block_text, block_indent, begin_marker, end_marker)
+    config_file.write_text("".join(lines), encoding="utf-8")
+    return "inserted"
+
+
+def remove_managed_block(config_file: Path, begin_marker: str, end_marker: str):
+    lines = config_file.read_text(encoding="utf-8").splitlines(keepends=True)
+    begin_index = None
+    end_index = None
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if begin_index is None and stripped == begin_marker:
+            begin_index = index
+            continue
+        if begin_index is not None and stripped == end_marker:
+            end_index = index
+            break
+
+    if begin_index is None:
+        return "not-found"
+    if end_index is None:
+        raise RuntimeError(f"managed block start marker found without end marker: {begin_marker}")
+
+    del lines[begin_index : end_index + 1]
+    config_file.write_text("".join(lines), encoding="utf-8")
+    return "removed"
+
+
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -189,6 +252,18 @@ def main():
     remove_parser.add_argument("--file", required=True)
     remove_parser.add_argument("--include-path", required=True)
 
+    insert_block_parser = subparsers.add_parser("insert-block")
+    insert_block_parser.add_argument("--host", required=True)
+    insert_block_parser.add_argument("--file", required=True)
+    insert_block_parser.add_argument("--block-file", required=True)
+    insert_block_parser.add_argument("--begin-marker", required=True)
+    insert_block_parser.add_argument("--end-marker", required=True)
+
+    remove_block_parser = subparsers.add_parser("remove-block")
+    remove_block_parser.add_argument("--file", required=True)
+    remove_block_parser.add_argument("--begin-marker", required=True)
+    remove_block_parser.add_argument("--end-marker", required=True)
+
     args = parser.parse_args()
 
     try:
@@ -200,6 +275,20 @@ def main():
             return
         if args.command == "remove-include":
             print(remove_include(Path(args.file), args.include_path))
+            return
+        if args.command == "insert-block":
+            print(
+                insert_managed_block(
+                    Path(args.file),
+                    args.host,
+                    Path(args.block_file),
+                    args.begin_marker,
+                    args.end_marker,
+                )
+            )
+            return
+        if args.command == "remove-block":
+            print(remove_managed_block(Path(args.file), args.begin_marker, args.end_marker))
             return
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
