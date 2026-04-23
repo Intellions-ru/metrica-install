@@ -1484,6 +1484,6 @@ main() {
   cat "$FINAL_REPORT_PATH"
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ "${BASH_SOURCE[0]-$0}" == "$0" ]]; then
   main "$@"
 fi
