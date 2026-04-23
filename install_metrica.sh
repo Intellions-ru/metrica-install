@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.2.3"
+DEFAULT_IMAGE_VERSION="v0.2.7"
 DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
@@ -503,31 +503,26 @@ parse_args() {
 
 collect_inputs() {
   if [[ -z "$PUBLISH_MODE" && "$NON_INTERACTIVE" -eq 0 ]]; then
-    read_prompt_value "Publication mode (attach-path/attach-subdomain/standalone) [attach-path]: " PUBLISH_MODE
-    PUBLISH_MODE="${PUBLISH_MODE:-attach-path}"
+    PUBLISH_MODE="attach-path"
   fi
 
   PUBLISH_MODE="$(normalize_publish_mode "$PUBLISH_MODE")"
 
-  prompt_value PUBLIC_HOST "Public domain for Metrica"
-  prompt_value INSTALLATION_NAME "Installation name"
-  prompt_value OWNER_EMAIL "Owner email"
-  prompt_value OWNER_NAME "Owner full name" "$OWNER_NAME"
-  prompt_value ACME_EMAIL "Email for TLS notifications" "${ACME_EMAIL:-$OWNER_EMAIL}"
+  prompt_value PUBLIC_HOST "Введите домен, где будет открываться Метрика"
+  prompt_value INSTALLATION_NAME "Введите имя установки"
+  prompt_value OWNER_EMAIL "Введите почту владельца"
+  prompt_value OWNER_NAME "Введите имя владельца" "$OWNER_NAME"
+  prompt_value ACME_EMAIL "Введите почту для TLS-уведомлений" "${ACME_EMAIL:-$OWNER_EMAIL}"
 
   if [[ -z "$MAX_BOT_TOKEN" && "$NON_INTERACTIVE" -eq 0 ]]; then
     local use_max=""
-    read_prompt_value "Configure MAX bot now? [y/N]: " use_max
+    read_prompt_value "Настроить MAX-бота сейчас? [y/N]: " use_max
     if [[ "$use_max" =~ ^[Yy]$ ]]; then
-      prompt_value MAX_BOT_TOKEN "MAX bot token (leave empty to skip)"
+      prompt_value MAX_BOT_TOKEN "Введите токен MAX-бота (Enter чтобы пропустить)"
       if [[ -z "$MAX_BOT_TOKEN" ]]; then
         log "MAX bot setup skipped. Installation will continue without MAX bot."
       fi
     fi
-  fi
-
-  if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
-    prompt_value ENTRY_PATH "Entry path on the main domain" "$ENTRY_PATH"
   fi
 
   [[ -n "$PUBLISH_MODE" ]] || die "Publication mode is required."
@@ -858,21 +853,21 @@ auto_attach_nginx_path_proxy() {
   [[ "$PUBLISH_MODE" == "attach-path" ]] || return 0
 
   if ! have_command nginx; then
-    warn "nginx auto-attach is skipped because nginx is not installed."
+    warn "На этом сервере не найден nginx. Режим attach-path останется внутренним до ручной настройки reverse proxy. Внешняя ссылка сейчас может отдавать 404."
     return 0
   fi
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    warn "nginx auto-attach is skipped because root privileges are required."
+    warn "Автоподключение nginx пропущено: нужны root-права."
     return 0
   fi
   if ! have_command python3; then
-    warn "nginx auto-attach is skipped because python3 is not available."
+    warn "Автоподключение nginx пропущено: на сервере нет python3."
     return 0
   fi
 
   err_file="$(mktemp)"
   if ! target_file="$(find_nginx_attach_target 2>"$err_file")"; then
-    warn "nginx auto-attach is skipped: $(cat "$err_file")"
+    warn "Автоподключение nginx пропущено: $(cat "$err_file")"
     rm -f "$err_file"
     return 0
   fi
@@ -1326,7 +1321,7 @@ post_install_smoke() {
   elif [[ "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]]; then
     warn "Attach-path auto-attach was applied, but the public ingress check still needs confirmation."
   else
-    warn "Attach mode still needs reverse-proxy publication. Apply the generated proxy config before checking the public URL."
+    warn "Путь /metrica еще не опубликован наружу. Сначала подключите reverse proxy, иначе публичный URL будет отдавать 404."
   fi
 
   verify_owner_login
@@ -1376,6 +1371,8 @@ write_final_report() {
     next_step_one="Откройте ссылку активации владельца: ${OWNER_ACTIVATION_URL}"
   elif [[ "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]]; then
     next_step_one="Откройте $(control_plane_public_root_url) и завершите активацию владельца"
+  elif is_attach_mode && ! have_command nginx; then
+    next_step_one="На этом сервере нет nginx. Подключите reverse proxy для ${entry_url} на сервере сайта, иначе ссылка будет отдавать 404"
   elif is_attach_mode; then
     next_step_one="Примените proxy-конфиг из ${INSTALL_DIR}/runtime/proxy и откройте ${entry_url}"
   else

@@ -18,22 +18,23 @@
 Рекомендуемый старт:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.6/install_metrica.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.7/install_metrica.sh | sudo bash
 ```
 
 Installer сам спросит:
 
-- режим публикации
 - домен
 - имя установки
 - почту первого владельца
 - почту для TLS
 - настройку MAX
 
+Режим `attach-path` и путь `/metrica` installer выбирает сам по умолчанию.
+
 Если нужно заранее передать значения без интерактивных вопросов:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.6/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.7/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain YOUR_DOMAIN \
   --entry-path /metrica \
@@ -44,7 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 Во время интерактивной установки может появиться вопрос:
 
 ```text
-Email for TLS notifications [YOUR_EMAIL]:
+Введите почту для TLS-уведомлений [YOUR_EMAIL]:
 ```
 
 Если почта для TLS-уведомлений должна быть той же самой, просто нажмите `Enter`.
@@ -52,7 +53,7 @@ Email for TLS notifications [YOUR_EMAIL]:
 Также установщик может спросить:
 
 ```text
-Configure MAX bot now? [y/N]:
+Настроить MAX-бота сейчас? [y/N]:
 ```
 
 Отвечайте `y` только если токен MAX уже готов.
@@ -60,7 +61,7 @@ Configure MAX bot now? [y/N]:
 Если вы ответили `y`, а потом передумали, на шаге
 
 ```text
-MAX bot token (leave empty to skip):
+Введите токен MAX-бота (Enter чтобы пропустить):
 ```
 
 можно просто нажать `Enter`. Установка продолжится без настройки MAX-бота.
@@ -72,7 +73,7 @@ MAX bot token (leave empty to skip):
 
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
-- `intellion-metrica-install-bundle-v0.2.6.tar.gz`
+- `intellion-metrica-install-bundle-v0.2.7.tar.gz`
 
 Он уже включает product images, поэтому отдельный Docker registry login для обычной установки не нужен.
 
