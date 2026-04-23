@@ -57,6 +57,14 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
   --owner-email YOUR_EMAIL
 ```
 
+Во время интерактивной установки может появиться вопрос:
+
+```text
+Email for TLS notifications [YOUR_EMAIL]:
+```
+
+Если почта для TLS-уведомлений должна быть той же самой, просто нажмите `Enter`.
+
 Пример для реального клиента:
 
 ```bash
@@ -328,6 +336,7 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 - `--entry-path /metrica` — путь панели для режима `attach-path`
 - `--installation-name` — понятное имя установки
 - `--owner-email` — почта первого владельца
+- `--acme-email` — почта для TLS-уведомлений; если она совпадает с `--owner-email`, можно не передавать параметр и просто нажать `Enter`, когда установщик покажет `Email for TLS notifications [...]`
 
 ### Пример для поддомена
 

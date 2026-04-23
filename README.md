@@ -32,6 +32,14 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 - `YOUR INSTALLATION NAME` — имя установки
 - `YOUR_EMAIL` — почта первого владельца
 
+Во время интерактивной установки может появиться вопрос:
+
+```text
+Email for TLS notifications [YOUR_EMAIL]:
+```
+
+Если почта для TLS-уведомлений должна быть той же самой, просто нажмите `Enter`.
+
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
 - `intellion-metrica-install-bundle-v0.2.3.tar.gz`
