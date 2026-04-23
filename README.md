@@ -18,7 +18,7 @@
 Рекомендуемый старт:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.10/install_metrica.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash
 ```
 
 Installer сам спросит:
@@ -34,7 +34,7 @@ Installer сам спросит:
 Если нужно заранее передать значения без интерактивных вопросов:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.10/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain YOUR_DOMAIN \
   --entry-path /metrica \
@@ -72,9 +72,15 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 - это касается и случая, когда `dockerized nginx` смонтирован не директорией, а одним bind-mounted `nginx.conf`;
 - если не удается однозначно и безопасно изменить боевой `nginx`, installer ничего не ломает и оставляет готовый proxy-шаблон для ручного подключения.
 
+Что стало проще в типовой установке:
+
+- первый сайт создается автоматически из домена установки;
+- в сценарии `тот же сервер + /metrica + nginx` loader Метрики подключается автоматически;
+- после активации владельца и первых заходов на сайт базовые просмотры и действия должны начать появляться в обзоре без ручной вставки трекера.
+
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
-- `intellion-metrica-install-bundle-v0.2.10.tar.gz`
+- `intellion-metrica-install-bundle-v0.2.11.tar.gz`
 
 Он уже включает product images, поэтому отдельный Docker registry login для обычной установки не нужен.
 

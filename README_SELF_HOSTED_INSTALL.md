@@ -26,7 +26,7 @@
 Просто запустите installer, а нужные значения он спросит сам:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.10/install_metrica.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash
 ```
 
 Installer по очереди спросит:
@@ -49,9 +49,9 @@ Installer по очереди спросит:
 ### Быстрый вариант через install bundle
 
 ```bash
-curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.10/intellion-metrica-install-bundle-v0.2.10.tar.gz
-tar -xzf intellion-metrica-install-bundle-v0.2.10.tar.gz
-cd intellion-metrica-install-bundle-v0.2.10
+curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.11/intellion-metrica-install-bundle-v0.2.11.tar.gz
+tar -xzf intellion-metrica-install-bundle-v0.2.11.tar.gz
+cd intellion-metrica-install-bundle-v0.2.11
 sudo bash ./scripts/install_metrica.sh
 ```
 
@@ -60,7 +60,7 @@ sudo bash ./scripts/install_metrica.sh
 Если вам удобнее не отвечать на вопросы, а сразу передать параметры в команду, используйте такой вариант:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.10/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain YOUR_DOMAIN \
   --entry-path /metrica \
@@ -313,7 +313,7 @@ ping example.com
 Сначала скачайте install bundle на сервер:
 
 ```bash
-curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.10/intellion-metrica-install-bundle-v0.2.10.tar.gz
+curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.2.11/intellion-metrica-install-bundle-v0.2.11.tar.gz
 ```
 
 Этот bundle уже включает:
@@ -328,8 +328,8 @@ curl -fLO https://github.com/Intellions-ru/metrica-install/releases/download/v0.
 Распакуйте архив и перейдите в каталог:
 
 ```bash
-tar -xzf intellion-metrica-install-bundle-v0.2.10.tar.gz
-cd intellion-metrica-install-bundle-v0.2.10
+tar -xzf intellion-metrica-install-bundle-v0.2.11.tar.gz
+cd intellion-metrica-install-bundle-v0.2.11
 ```
 
 Запустите установку:
@@ -346,7 +346,7 @@ sudo bash ./scripts/install_metrica.sh \
 ### Вариант 2. По прямой ссылке на установщик
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.10/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain example.com \
   --entry-path /metrica \
@@ -377,7 +377,7 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 ### Пример для поддомена
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.10/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.11/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-subdomain \
   --domain analytics.example.com \
   --installation-name "Example Analytics" \
@@ -538,37 +538,34 @@ cat /opt/intellion-metrica/state/owner-activation.txt
 - `https://example.com/metrica`
 - или `https://analytics.example.com`
 
-### Шаг 2. Добавьте сайт
+### Шаг 2. Проверьте, что первый сайт появился автоматически
 
-В панели откройте:
+В типовой установке первый сайт создается из домена установки автоматически.
+
+Проверьте в панели:
 
 - `Управление`
 - `Сайты`
 
-Заполните минимум:
+Что должно быть уже заполнено:
 
 - код сайта;
 - название;
 - основной домен;
-- разрешенные домены.
+- разрешенные домены;
+- секрет подписанного ingest.
 
-### Шаг 3. Сохраните настройки сайта
+### Шаг 3. Проверьте автоподключение сбора
 
-После сохранения панель подготовит данные для безопасного приема событий.
+В типовом сценарии `attach-path` с nginx на том же сервере установщик:
 
-### Шаг 4. Подключите маршрут сайта к Метрике
+- публикует `Интеллион Метрику` по пути `/metrica`;
+- включает same-site proxy внутри продуктового контура;
+- подключает browser loader в HTML-ответы сайта.
 
-Для сайта нужно направить клиентские события и согласия в Метрику.
+Если у сайта нестандартная публикация, этот шаг может потребовать ручной настройки reverse proxy.
 
-Базовая схема:
-
-- маршрут событий;
-- маршрут согласий;
-- безопасный прием через подписанный proxy-путь.
-
-В обычной установке это делается через ваш сайт и его серверную конфигурацию. Если вы подключаете первый сайт самостоятельно и не уверены в схеме, лучше пройти этот шаг по инструкции handoff или с нашей помощью.
-
-### Шаг 5. Проверьте, что данные пошли
+### Шаг 4. Проверьте, что данные пошли
 
 После подключения:
 
@@ -579,7 +576,7 @@ cat /opt/intellion-metrica/state/owner-activation.txt
 
 Что должно получиться:
 
-- сайт добавлен;
+- сайт уже создан;
 - события начинают появляться;
 - согласия фиксируются, если они включены;
 - цели можно настроить и проверить.

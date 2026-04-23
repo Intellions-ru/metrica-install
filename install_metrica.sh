@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.2.3"
-DEFAULT_BUNDLE_REF="v0.2.10"
+DEFAULT_IMAGE_VERSION="v0.2.11"
+DEFAULT_BUNDLE_REF="v0.2.11"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
 DEFAULT_INSTALLER_HELPERS_URL_BASE="https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/scripts"
@@ -1776,9 +1776,9 @@ MAX target intent: ${MAX_TARGET_KIND}${MAX_TARGET_VALUE:+:${MAX_TARGET_VALUE}}
 Следующий шаг:
 1. ${next_step_one}
 2. После активации войдите в ${entry_url}
-3. Добавьте первый сайт в Управление -> Сайты
-4. Получите ingest secret и подключите same-site proxy на сайте клиента
-5. Проверьте collect / consent и первые события
+3. Проверьте, что первый сайт для домена установки появился автоматически в Управление -> Сайты
+4. Откройте основной сайт в браузере и проверьте, что события начинают появляться в Обзоре
+5. Если сайт опубликован нестандартно, проверьте collect / consent и автоподключение loader через reverse proxy
 EOF
 
   FINAL_REPORT_PATH="$install_status_dir/install-report.txt"
