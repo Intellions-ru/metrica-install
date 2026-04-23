@@ -7,6 +7,7 @@ DEFAULT_IMAGE_VERSION="v0.2.3"
 DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
+DEFAULT_INSTALLER_HELPERS_URL_BASE="https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/scripts"
 SOURCE_FALLBACK_BUNDLE_URL_BASE="${SOURCE_FALLBACK_BUNDLE_URL_BASE:-}"
 MIN_MEMORY_MB=2048
 WARN_MEMORY_MB=4096
@@ -42,6 +43,7 @@ PRECHECK_ONLY=0
 NON_INTERACTIVE=0
 DRY_RUN=0
 AUTO_INSTALL_DOCKER=1
+AUTO_ATTACH_PROXY=1
 SKIP_DNS_CHECK=0
 BUNDLE_REF="$DEFAULT_BUNDLE_REF"
 BUNDLE_URL=""
@@ -66,6 +68,13 @@ FINAL_LOG_PATH=""
 FINAL_ENTITLEMENT_STATUS="unknown"
 OWNER_ACTIVATION_URL=""
 OWNER_ACTIVATION_PATH=""
+AUTO_ATTACH_PROXY_APPLIED=0
+AUTO_ATTACH_PROXY_KIND=""
+AUTO_ATTACH_PROXY_TARGET_FILE=""
+AUTO_ATTACH_PROXY_SNIPPET=""
+AUTO_ATTACH_PROXY_CHECK_URL=""
+MANAGED_STATE_FILE=""
+MAX_DIGEST_TIMER_INSTALLED=0
 
 on_exit() {
   local exit_code="$1"
@@ -110,6 +119,7 @@ Optional:
   --preflight-only
   --dry-run
   --skip-dns-check
+  --no-auto-attach-proxy
   --no-docker-install
   --help
 
@@ -164,45 +174,6 @@ image_ref_local_available() {
   docker image inspect "$image_ref" >/dev/null 2>&1
 }
 
-fetch_bundle_archive() {
-  local destination="$1"
-  local release_url="$BUNDLE_URL"
-  local source_tag_url=""
-  local source_head_url=""
-
-  if [[ -z "$release_url" ]]; then
-    if [[ "$DEFAULT_PRODUCT_BUNDLE_URL_BASE" == *"/releases/download" ]]; then
-      release_url="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/${BUNDLE_REF}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
-    else
-      release_url="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
-    fi
-  fi
-
-  log "Downloading install bundle from $release_url"
-  if fetch_url "$release_url" "$destination"; then
-    return 0
-  fi
-
-  if [[ -z "$SOURCE_FALLBACK_BUNDLE_URL_BASE" ]]; then
-    return 1
-  fi
-
-  source_tag_url="${SOURCE_FALLBACK_BUNDLE_URL_BASE}/refs/tags/${BUNDLE_REF}"
-  source_head_url="${SOURCE_FALLBACK_BUNDLE_URL_BASE}/refs/heads/${BUNDLE_REF}"
-
-  warn "Product install bundle was not downloaded. Falling back to tag source bundle: $source_tag_url"
-  if fetch_url "$source_tag_url" "$destination"; then
-    return 0
-  fi
-
-  warn "Tag source bundle was not downloaded. Falling back to branch source bundle: $source_head_url"
-  if fetch_url "$source_head_url" "$destination"; then
-    return 0
-  fi
-
-  return 1
-}
-
 ensure_runtime_permissions() {
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
     return
@@ -247,6 +218,12 @@ random_alnum() {
   value="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$length")"
   set -o pipefail
   printf '%s' "$value"
+}
+
+slugify_identifier() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//'
 }
 
 fetch_url() {
@@ -325,6 +302,45 @@ control_plane_base_path() {
   else
     printf ''
   fi
+}
+
+fetch_bundle_archive() {
+  local destination="$1"
+  local release_url="$BUNDLE_URL"
+  local source_tag_url=""
+  local source_head_url=""
+
+  if [[ -z "$release_url" ]]; then
+    if [[ "$DEFAULT_PRODUCT_BUNDLE_URL_BASE" == *"/releases/download" ]]; then
+      release_url="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/${BUNDLE_REF}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
+    else
+      release_url="${DEFAULT_PRODUCT_BUNDLE_URL_BASE}/intellion-metrica-install-bundle-${BUNDLE_REF}.tar.gz"
+    fi
+  fi
+
+  log "Downloading install bundle from $release_url"
+  if fetch_url "$release_url" "$destination"; then
+    return 0
+  fi
+
+  if [[ -z "$SOURCE_FALLBACK_BUNDLE_URL_BASE" ]]; then
+    return 1
+  fi
+
+  source_tag_url="${SOURCE_FALLBACK_BUNDLE_URL_BASE}/refs/tags/${BUNDLE_REF}"
+  source_head_url="${SOURCE_FALLBACK_BUNDLE_URL_BASE}/refs/heads/${BUNDLE_REF}"
+
+  warn "Product install bundle was not downloaded. Falling back to tag source bundle: $source_tag_url"
+  if fetch_url "$source_tag_url" "$destination"; then
+    return 0
+  fi
+
+  warn "Tag source bundle was not downloaded. Falling back to branch source bundle: $source_head_url"
+  if fetch_url "$source_head_url" "$destination"; then
+    return 0
+  fi
+
+  return 1
 }
 
 control_plane_local_path() {
@@ -452,6 +468,10 @@ parse_args() {
         SKIP_DNS_CHECK=1
         shift
         ;;
+      --no-auto-attach-proxy)
+        AUTO_ATTACH_PROXY=0
+        shift
+        ;;
       --no-docker-install)
         AUTO_INSTALL_DOCKER=0
         shift
@@ -485,7 +505,10 @@ collect_inputs() {
     local use_max=""
     read -r -p "Configure MAX bot now? [y/N]: " use_max || true
     if [[ "$use_max" =~ ^[Yy]$ ]]; then
-      prompt_value MAX_BOT_TOKEN "MAX bot token"
+      prompt_value MAX_BOT_TOKEN "MAX bot token (leave empty to skip)"
+      if [[ -z "$MAX_BOT_TOKEN" ]]; then
+        log "MAX bot setup skipped. Installation will continue without MAX bot."
+      fi
     fi
   fi
 
@@ -788,6 +811,150 @@ EOF
   fi
 }
 
+persist_managed_state() {
+  MANAGED_STATE_FILE="$INSTALL_DIR/state/installer-managed.env"
+  cat >"$MANAGED_STATE_FILE" <<EOF
+INSTALL_DIR=$(printf '%q' "$INSTALL_DIR")
+PUBLISH_MODE=$(printf '%q' "$PUBLISH_MODE")
+PUBLIC_HOST=$(printf '%q' "$PUBLIC_HOST")
+ENTRY_PATH=$(printf '%q' "$ENTRY_PATH")
+AUTO_ATTACH_PROXY=$(printf '%q' "$AUTO_ATTACH_PROXY")
+AUTO_ATTACH_PROXY_APPLIED=$(printf '%q' "$AUTO_ATTACH_PROXY_APPLIED")
+AUTO_ATTACH_PROXY_KIND=$(printf '%q' "$AUTO_ATTACH_PROXY_KIND")
+AUTO_ATTACH_PROXY_TARGET_FILE=$(printf '%q' "$AUTO_ATTACH_PROXY_TARGET_FILE")
+AUTO_ATTACH_PROXY_SNIPPET=$(printf '%q' "$AUTO_ATTACH_PROXY_SNIPPET")
+AUTO_ATTACH_PROXY_CHECK_URL=$(printf '%q' "$AUTO_ATTACH_PROXY_CHECK_URL")
+MAX_DIGEST_TIMER_INSTALLED=$(printf '%q' "$MAX_DIGEST_TIMER_INSTALLED")
+EOF
+  chmod 600 "$MANAGED_STATE_FILE"
+}
+
+find_nginx_attach_target() {
+  python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
+    find-target \
+    --host "$PUBLIC_HOST" \
+    --search-root /etc/nginx/sites-enabled \
+    --search-root /etc/nginx/conf.d
+}
+
+auto_attach_nginx_path_proxy() {
+  local target_file snippet_name snippet_path backup_dir backup_path snippet_backup_path="" insert_status err_file
+
+  [[ "$AUTO_ATTACH_PROXY" -eq 1 ]] || return 0
+  [[ "$PUBLISH_MODE" == "attach-path" ]] || return 0
+
+  if ! have_command nginx; then
+    warn "nginx auto-attach is skipped because nginx is not installed."
+    return 0
+  fi
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    warn "nginx auto-attach is skipped because root privileges are required."
+    return 0
+  fi
+  if ! have_command python3; then
+    warn "nginx auto-attach is skipped because python3 is not available."
+    return 0
+  fi
+
+  err_file="$(mktemp)"
+  if ! target_file="$(find_nginx_attach_target 2>"$err_file")"; then
+    warn "nginx auto-attach is skipped: $(cat "$err_file")"
+    rm -f "$err_file"
+    return 0
+  fi
+  rm -f "$err_file"
+
+  snippet_name="intellion-metrica-$(slugify_identifier "${PUBLIC_HOST}-${ENTRY_PATH}-attach-path").conf"
+  snippet_path="/etc/nginx/snippets/$snippet_name"
+  backup_dir="$INSTALL_DIR/artifacts/install/${BOOT_TS}-one-command-install/nginx-backups"
+  backup_path="$backup_dir/$(basename "$target_file").bak"
+
+  mkdir -p "$backup_dir" /etc/nginx/snippets
+  if [[ -f "$snippet_path" ]]; then
+    snippet_backup_path="$backup_dir/$(basename "$snippet_path").bak"
+    cp "$snippet_path" "$snippet_backup_path"
+  fi
+  cp "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf" "$snippet_path"
+  chmod 644 "$snippet_path"
+  cp "$target_file" "$backup_path"
+
+  if ! insert_status="$(
+    python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
+      insert-include \
+      --host "$PUBLIC_HOST" \
+      --file "$target_file" \
+      --include-path "$snippet_path"
+  )"; then
+    if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
+      cp "$snippet_backup_path" "$snippet_path"
+    else
+      rm -f "$snippet_path"
+    fi
+    warn "nginx auto-attach was skipped because the server block could not be patched safely."
+    return 0
+  fi
+
+  if ! nginx -t >/dev/null 2>&1; then
+    cp "$backup_path" "$target_file"
+    if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
+      cp "$snippet_backup_path" "$snippet_path"
+    else
+      rm -f "$snippet_path"
+    fi
+    warn "nginx auto-attach was reverted because nginx -t failed after patching."
+    return 0
+  fi
+
+  if have_command systemctl; then
+    if ! systemctl reload nginx >/dev/null 2>&1; then
+      if [[ "$insert_status" != "already-present" ]]; then
+        cp "$backup_path" "$target_file"
+      fi
+      if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
+        cp "$snippet_backup_path" "$snippet_path"
+      elif [[ "$insert_status" != "already-present" ]]; then
+        rm -f "$snippet_path"
+      fi
+      nginx -t >/dev/null 2>&1 || true
+      systemctl reload nginx >/dev/null 2>&1 || true
+      warn "nginx auto-attach was reverted because nginx reload failed."
+      return 0
+    fi
+  elif ! nginx -s reload >/dev/null 2>&1; then
+    if [[ "$insert_status" != "already-present" ]]; then
+      cp "$backup_path" "$target_file"
+    fi
+    if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
+      cp "$snippet_backup_path" "$snippet_path"
+    elif [[ "$insert_status" != "already-present" ]]; then
+      rm -f "$snippet_path"
+    fi
+    warn "nginx auto-attach was reverted because nginx reload failed."
+    return 0
+  fi
+
+  AUTO_ATTACH_PROXY_APPLIED=1
+  AUTO_ATTACH_PROXY_KIND="nginx"
+  AUTO_ATTACH_PROXY_TARGET_FILE="$target_file"
+  AUTO_ATTACH_PROXY_SNIPPET="$snippet_path"
+  AUTO_ATTACH_PROXY_CHECK_URL="$(control_plane_public_root_url)"
+  persist_managed_state
+  log "nginx auto-attach applied (${insert_status}) for $(control_plane_public_root_url)"
+}
+
+copy_or_fetch_script() {
+  local source_path="$1"
+  local destination_path="$2"
+  local remote_name="$3"
+
+  if [[ -f "$source_path" ]]; then
+    cp "$source_path" "$destination_path"
+    return 0
+  fi
+
+  fetch_url "${DEFAULT_INSTALLER_HELPERS_URL_BASE}/${remote_name}" "$destination_path"
+}
+
 prepare_install_tree() {
   log "Preparing install tree at $INSTALL_DIR"
   mkdir -p "$INSTALL_DIR"/db "$INSTALL_DIR"/runtime "$INSTALL_DIR"/artifacts/install "$INSTALL_DIR"/logs "$INSTALL_DIR"/state "$INSTALL_DIR"/scripts
@@ -797,6 +964,8 @@ prepare_install_tree() {
   rm -rf "$INSTALL_DIR/db/migrations"
   cp -R "$BUNDLE_ROOT/db/migrations" "$INSTALL_DIR/db/migrations"
   cp "$BUNDLE_ROOT/scripts/install_metrica.sh" "$INSTALL_DIR/scripts/install_metrica.sh"
+  copy_or_fetch_script "$BUNDLE_ROOT/scripts/uninstall_metrica.sh" "$INSTALL_DIR/scripts/uninstall_metrica.sh" "uninstall_metrica.sh"
+  copy_or_fetch_script "$BUNDLE_ROOT/scripts/manage_nginx_site.py" "$INSTALL_DIR/scripts/manage_nginx_site.py" "manage_nginx_site.py"
   if [[ -f "$BUNDLE_ROOT/scripts/preflight_metrica.sh" ]]; then
     cp "$BUNDLE_ROOT/scripts/preflight_metrica.sh" "$INSTALL_DIR/scripts/preflight_metrica.sh"
   fi
@@ -807,6 +976,8 @@ prepare_install_tree() {
     cp "$BUNDLE_ROOT/scripts/send-max-digest-host.py" "$INSTALL_DIR/scripts/send-max-digest-host.py"
   fi
   chmod 700 "$INSTALL_DIR/scripts/install_metrica.sh"
+  [[ -f "$INSTALL_DIR/scripts/uninstall_metrica.sh" ]] && chmod 700 "$INSTALL_DIR/scripts/uninstall_metrica.sh"
+  [[ -f "$INSTALL_DIR/scripts/manage_nginx_site.py" ]] && chmod 700 "$INSTALL_DIR/scripts/manage_nginx_site.py"
   [[ -f "$INSTALL_DIR/scripts/preflight_metrica.sh" ]] && chmod 700 "$INSTALL_DIR/scripts/preflight_metrica.sh"
   [[ -f "$INSTALL_DIR/scripts/issue_metrica_entitlement.mjs" ]] && chmod 700 "$INSTALL_DIR/scripts/issue_metrica_entitlement.mjs"
   [[ -f "$INSTALL_DIR/scripts/send-max-digest-host.py" ]] && chmod 700 "$INSTALL_DIR/scripts/send-max-digest-host.py"
@@ -861,6 +1032,8 @@ EOF
     cp "$ENTITLEMENT_FILE" "$INSTALL_DIR/state/installation-entitlement.jwt"
     chmod 600 "$INSTALL_DIR/state/installation-entitlement.jwt"
   fi
+
+  persist_managed_state
 
 }
 
@@ -927,6 +1100,8 @@ EOF
   systemctl daemon-reload
   systemctl enable --now intellion-metrica-max-digest-host.timer >/dev/null 2>&1 || \
     warn "Failed to enable intellion-metrica-max-digest-host.timer automatically."
+  MAX_DIGEST_TIMER_INSTALLED=1
+  persist_managed_state
 }
 
 compose() {
@@ -1131,8 +1306,13 @@ post_install_smoke() {
     log "Public HTTPS health endpoint is reachable."
   elif [[ "$PUBLISH_MODE" == "standalone" ]]; then
     warn "Public HTTPS health smoke did not pass yet. Internal health is healthy, but TLS/public routing still needs confirmation."
+  elif [[ "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]] && \
+       curl -kfsS --resolve "${PUBLIC_HOST}:443:127.0.0.1" "$(control_plane_public_root_url)" >/dev/null; then
+    log "Attach-path proxy was applied automatically and local ingress check passed."
+  elif [[ "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]]; then
+    warn "Attach-path auto-attach was applied, but the public ingress check still needs confirmation."
   else
-    warn "Attach mode was installed without taking over 80/443. Apply the generated reverse-proxy config before checking the public URL."
+    warn "Attach mode still needs reverse-proxy publication. Apply the generated proxy config before checking the public URL."
   fi
 
   verify_owner_login
@@ -1180,6 +1360,8 @@ write_final_report() {
   fi
   if [[ -n "$OWNER_ACTIVATION_URL" ]]; then
     next_step_one="Откройте ссылку активации владельца: ${OWNER_ACTIVATION_URL}"
+  elif [[ "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]]; then
+    next_step_one="Откройте $(control_plane_public_root_url) и завершите активацию владельца"
   elif is_attach_mode; then
     next_step_one="Примените proxy-конфиг из ${INSTALL_DIR}/runtime/proxy и откройте ${entry_url}"
   else
@@ -1277,6 +1459,7 @@ main() {
 
   prepare_install_tree
   deploy_stack
+  auto_attach_nginx_path_proxy
   install_max_digest_host_timer
   bootstrap_owner
   post_install_smoke
@@ -1287,4 +1470,6 @@ main() {
   cat "$FINAL_REPORT_PATH"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

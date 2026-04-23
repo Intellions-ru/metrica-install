@@ -51,10 +51,15 @@ Configure MAX bot now? [y/N]:
 Если вы ответили `y`, а потом передумали, на шаге
 
 ```text
-MAX bot token:
+MAX bot token (leave empty to skip):
 ```
 
 можно просто нажать `Enter`. Установка продолжится без настройки MAX-бота.
+
+Что происходит с `/metrica`:
+
+- в основном сценарии `attach-path` installer пытается безопасно подключить путь `/metrica` в `nginx` автоматически;
+- если не удается однозначно и безопасно изменить боевой `nginx`, installer ничего не ломает и оставляет готовый proxy-шаблон для ручного подключения.
 
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
@@ -65,3 +70,15 @@ MAX bot token:
 Если нужен полный buyer-facing путь со всеми шагами, открывайте:
 
 - `README_SELF_HOSTED_INSTALL.md`
+
+Безопасное удаление после установки:
+
+```bash
+sudo bash /opt/intellion-metrica/scripts/uninstall_metrica.sh --yes
+```
+
+Полное удаление с backup перед purge:
+
+```bash
+sudo bash /opt/intellion-metrica/scripts/uninstall_metrica.sh --yes --purge-all
+```
