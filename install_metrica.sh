@@ -4,7 +4,7 @@ set -Eeuo pipefail
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
 DEFAULT_IMAGE_VERSION="v0.2.3"
-DEFAULT_BUNDLE_REF="v0.2.9"
+DEFAULT_BUNDLE_REF="v0.2.10"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
 DEFAULT_INSTALLER_HELPERS_URL_BASE="https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/scripts"
@@ -873,6 +873,11 @@ docker_nginx_mounts() {
   docker inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{printf "%s\t%s\n" .Source .Destination}}{{end}}{{end}}' "$container_name"
 }
 
+docker_container_networks() {
+  local container_name="$1"
+  docker inspect --format '{{range $name, $network := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$container_name"
+}
+
 find_docker_nginx_container() {
   local name image ports
   local -a matches=()
@@ -895,6 +900,48 @@ find_docker_nginx_container() {
   fi
   printf '%s\n' "no docker nginx container exposes 80/443" >&2
   return 1
+}
+
+find_docker_nginx_attach_network() {
+  local container_name="$1"
+  local network_name
+  local -a matches=()
+
+  while IFS= read -r network_name; do
+    [[ -n "$network_name" ]] || continue
+    case "$network_name" in
+      bridge|host|none)
+        continue
+        ;;
+    esac
+    matches+=("$network_name")
+  done < <(docker_container_networks "$container_name")
+
+  if [[ "${#matches[@]}" -eq 1 ]]; then
+    printf '%s' "${matches[0]}"
+    return 0
+  fi
+  if [[ "${#matches[@]}" -gt 1 ]]; then
+    printf '%s\n' "multiple docker networks are attached to $container_name: ${matches[*]}" >&2
+    return 1
+  fi
+  printf '%s\n' "no user-defined docker network found for $container_name" >&2
+  return 1
+}
+
+ensure_control_plane_on_network() {
+  local network_name="$1"
+  if docker_container_networks intellion-metrica-control-plane | grep -Fxq "$network_name"; then
+    return 0
+  fi
+  docker network connect --alias intellion-metrica-control-plane "$network_name" intellion-metrica-control-plane >/dev/null
+}
+
+render_docker_nginx_attach_block() {
+  local upstream="$1"
+  local destination="$2"
+  sed "s|http://127.0.0.1:${CONTROL_PLANE_PORT}|http://${upstream}|g" \
+    "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf" >"$destination"
 }
 
 resolve_docker_nginx_attach_paths() {
@@ -1006,6 +1053,7 @@ try_apply_nginx_attach() {
   local reload_cmd="$5"
   local kind="$6"
   local container_name="${7:-}"
+  local block_file="${8:-$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf}"
   local backup_dir backup_path snippet_backup_path="" insert_status=""
 
   backup_dir="$INSTALL_DIR/artifacts/install/${BOOT_TS}-one-command-install/nginx-backups"
@@ -1016,7 +1064,7 @@ try_apply_nginx_attach() {
     snippet_backup_path="$backup_dir/$(basename "$snippet_host_path").bak"
     cp "$snippet_host_path" "$snippet_backup_path"
   fi
-  cp "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf" "$snippet_host_path"
+  cp "$block_file" "$snippet_host_path"
   chmod 644 "$snippet_host_path"
   cp "$target_file" "$backup_path"
 
@@ -1080,6 +1128,7 @@ try_apply_nginx_attach_inline() {
   local container_name="${5:-}"
   local begin_marker="$6"
   local end_marker="$7"
+  local block_file="${8:-$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf}"
   local backup_dir backup_path insert_status=""
 
   backup_dir="$INSTALL_DIR/artifacts/install/${BOOT_TS}-one-command-install/nginx-backups"
@@ -1093,7 +1142,7 @@ try_apply_nginx_attach_inline() {
       insert-block \
       --host "$PUBLIC_HOST" \
       --file "$target_file" \
-      --block-file "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf" \
+      --block-file "$block_file" \
       --begin-marker "$begin_marker" \
       --end-marker "$end_marker"
   )"; then
@@ -1148,6 +1197,7 @@ try_auto_attach_host_nginx_path_proxy() {
 
 try_auto_attach_docker_nginx_path_proxy() {
   local container_name="" target_file="" snippet_host_path="" include_path="" resolved_paths=""
+  local network_name="" docker_upstream="intellion-metrica-control-plane:3000" block_file=""
   local begin_marker="" end_marker=""
   local err_file
   err_file="$(mktemp)"
@@ -1155,6 +1205,18 @@ try_auto_attach_docker_nginx_path_proxy() {
     rm -f "$err_file"
     return 1
   fi
+  if ! network_name="$(find_docker_nginx_attach_network "$container_name" 2>"$err_file")"; then
+    rm -f "$err_file"
+    return 1
+  fi
+  if ! ensure_control_plane_on_network "$network_name" 2>"$err_file"; then
+    rm -f "$err_file"
+    return 1
+  fi
+
+  block_file="$INSTALL_DIR/runtime/proxy/nginx/attach-path-docker-nginx.conf"
+  render_docker_nginx_attach_block "$docker_upstream" "$block_file"
+
   if resolved_paths="$(resolve_docker_nginx_attach_paths "$container_name" 2>"$err_file")"; then
     rm -f "$err_file"
     target_file="$(printf '%s\n' "$resolved_paths" | sed -n '1p')"
@@ -1168,7 +1230,8 @@ try_auto_attach_docker_nginx_path_proxy() {
       "docker exec $container_name nginx -t" \
       "docker exec $container_name nginx -s reload" \
       "docker-nginx" \
-      "$container_name"; then
+      "$container_name" \
+      "$block_file"; then
       return 0
     fi
     err_file="$(mktemp)"
@@ -1186,7 +1249,8 @@ try_auto_attach_docker_nginx_path_proxy() {
       "docker-nginx-inline" \
       "$container_name" \
       "$begin_marker" \
-      "$end_marker"
+      "$end_marker" \
+      "$block_file"
     return $?
   fi
 
