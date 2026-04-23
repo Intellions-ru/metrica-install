@@ -40,6 +40,22 @@ Email for TLS notifications [YOUR_EMAIL]:
 
 Если почта для TLS-уведомлений должна быть той же самой, просто нажмите `Enter`.
 
+Также установщик может спросить:
+
+```text
+Configure MAX bot now? [y/N]:
+```
+
+Отвечайте `y` только если токен MAX уже готов.
+
+Если вы ответили `y`, а потом передумали, на шаге
+
+```text
+MAX bot token:
+```
+
+можно просто нажать `Enter`. Установка продолжится без настройки MAX-бота.
+
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
 - `intellion-metrica-install-bundle-v0.2.3.tar.gz`
