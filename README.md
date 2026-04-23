@@ -18,7 +18,7 @@
 Рекомендуемый старт:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.7/install_metrica.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.8/install_metrica.sh | sudo bash
 ```
 
 Installer сам спросит:
@@ -34,7 +34,7 @@ Installer сам спросит:
 Если нужно заранее передать значения без интерактивных вопросов:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.7/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.8/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain YOUR_DOMAIN \
   --entry-path /metrica \
@@ -68,12 +68,12 @@ curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.
 
 Что происходит с `/metrica`:
 
-- в основном сценарии `attach-path` installer пытается безопасно подключить путь `/metrica` в `nginx` автоматически;
+- в основном сценарии `attach-path` installer пытается безопасно подключить путь `/metrica` в host `nginx` или `dockerized nginx` автоматически;
 - если не удается однозначно и безопасно изменить боевой `nginx`, installer ничего не ломает и оставляет готовый proxy-шаблон для ручного подключения.
 
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
-- `intellion-metrica-install-bundle-v0.2.7.tar.gz`
+- `intellion-metrica-install-bundle-v0.2.8.tar.gz`
 
 Он уже включает product images, поэтому отдельный Docker registry login для обычной установки не нужен.
 

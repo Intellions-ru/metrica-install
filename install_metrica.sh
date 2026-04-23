@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.2.7"
-DEFAULT_BUNDLE_REF="$DEFAULT_IMAGE_VERSION"
+DEFAULT_IMAGE_VERSION="v0.2.3"
+DEFAULT_BUNDLE_REF="v0.2.8"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
 DEFAULT_INSTALLER_HELPERS_URL_BASE="https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/scripts"
@@ -72,6 +72,8 @@ AUTO_ATTACH_PROXY_APPLIED=0
 AUTO_ATTACH_PROXY_KIND=""
 AUTO_ATTACH_PROXY_TARGET_FILE=""
 AUTO_ATTACH_PROXY_SNIPPET=""
+AUTO_ATTACH_PROXY_INCLUDE_PATH=""
+AUTO_ATTACH_PROXY_CONTAINER_NAME=""
 AUTO_ATTACH_PROXY_CHECK_URL=""
 MANAGED_STATE_FILE=""
 MAX_DIGEST_TIMER_INSTALLED=0
@@ -832,6 +834,8 @@ AUTO_ATTACH_PROXY_APPLIED=$(printf '%q' "$AUTO_ATTACH_PROXY_APPLIED")
 AUTO_ATTACH_PROXY_KIND=$(printf '%q' "$AUTO_ATTACH_PROXY_KIND")
 AUTO_ATTACH_PROXY_TARGET_FILE=$(printf '%q' "$AUTO_ATTACH_PROXY_TARGET_FILE")
 AUTO_ATTACH_PROXY_SNIPPET=$(printf '%q' "$AUTO_ATTACH_PROXY_SNIPPET")
+AUTO_ATTACH_PROXY_INCLUDE_PATH=$(printf '%q' "$AUTO_ATTACH_PROXY_INCLUDE_PATH")
+AUTO_ATTACH_PROXY_CONTAINER_NAME=$(printf '%q' "$AUTO_ATTACH_PROXY_CONTAINER_NAME")
 AUTO_ATTACH_PROXY_CHECK_URL=$(printf '%q' "$AUTO_ATTACH_PROXY_CHECK_URL")
 MAX_DIGEST_TIMER_INSTALLED=$(printf '%q' "$MAX_DIGEST_TIMER_INSTALLED")
 EOF
@@ -846,45 +850,131 @@ find_nginx_attach_target() {
     --search-root /etc/nginx/conf.d
 }
 
-auto_attach_nginx_path_proxy() {
-  local target_file snippet_name snippet_path backup_dir backup_path snippet_backup_path="" insert_status err_file
+docker_nginx_mounts() {
+  local container_name="$1"
+  docker inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{printf "%s\t%s\n" .Source .Destination}}{{end}}{{end}}' "$container_name"
+}
 
-  [[ "$AUTO_ATTACH_PROXY" -eq 1 ]] || return 0
-  [[ "$PUBLISH_MODE" == "attach-path" ]] || return 0
+find_docker_nginx_container() {
+  local name image ports
+  local -a matches=()
+  while IFS=$'\t' read -r name image ports; do
+    [[ -n "$name" ]] || continue
+    if [[ "$name" == *nginx* || "$image" == *nginx* ]]; then
+      if [[ "$ports" == *":80->"* || "$ports" == *":443->"* ]]; then
+        matches+=("$name")
+      fi
+    fi
+  done < <(docker ps --format '{{.Names}}\t{{.Image}}\t{{.Ports}}')
 
-  if ! have_command nginx; then
-    warn "На этом сервере не найден nginx. Режим attach-path останется внутренним до ручной настройки reverse proxy. Внешняя ссылка сейчас может отдавать 404."
+  if [[ "${#matches[@]}" -eq 1 ]]; then
+    printf '%s' "${matches[0]}"
     return 0
   fi
-  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    warn "Автоподключение nginx пропущено: нужны root-права."
-    return 0
+  if [[ "${#matches[@]}" -gt 1 ]]; then
+    printf '%s\n' "multiple docker nginx containers expose 80/443: ${matches[*]}" >&2
+    return 1
   fi
-  if ! have_command python3; then
-    warn "Автоподключение nginx пропущено: на сервере нет python3."
-    return 0
+  printf '%s\n' "no docker nginx container exposes 80/443" >&2
+  return 1
+}
+
+resolve_docker_nginx_attach_paths() {
+  local container_name="$1"
+  local target_file=""
+  local mount_source mount_target candidate_source candidate_target
+  local -a search_roots=() root_specs=()
+  local -a find_args=()
+
+  while IFS=$'\t' read -r mount_source mount_target; do
+    [[ -n "$mount_source" && -n "$mount_target" ]] || continue
+
+    if [[ "$mount_target" == "/etc/nginx/conf.d" || "$mount_target" == "/etc/nginx/sites-enabled" ]]; then
+      [[ -d "$mount_source" ]] || continue
+      search_roots+=("$mount_source")
+      root_specs+=("$mount_source|$mount_target")
+      continue
+    fi
+
+    if [[ "$mount_target" == "/etc/nginx" && -d "$mount_source" ]]; then
+      if [[ -d "$mount_source/conf.d" ]]; then
+        search_roots+=("$mount_source/conf.d")
+        root_specs+=("$mount_source/conf.d|/etc/nginx/conf.d")
+      fi
+      if [[ -d "$mount_source/sites-enabled" ]]; then
+        search_roots+=("$mount_source/sites-enabled")
+        root_specs+=("$mount_source/sites-enabled|/etc/nginx/sites-enabled")
+      fi
+    fi
+  done < <(docker_nginx_mounts "$container_name")
+
+  [[ "${#search_roots[@]}" -gt 0 ]] || {
+    printf '%s\n' "docker nginx container $container_name does not expose a bind-mounted /etc/nginx config root" >&2
+    return 1
+  }
+
+  find_args=(find-target --host "$PUBLIC_HOST")
+  for mount_source in "${search_roots[@]}"; do
+    find_args+=(--search-root "$mount_source")
+  done
+
+  if ! target_file="$(python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" "${find_args[@]}")"; then
+    return 1
   fi
 
-  err_file="$(mktemp)"
-  if ! target_file="$(find_nginx_attach_target 2>"$err_file")"; then
-    warn "Автоподключение nginx пропущено: $(cat "$err_file")"
-    rm -f "$err_file"
-    return 0
-  fi
-  rm -f "$err_file"
+  candidate_source=""
+  candidate_target=""
+  for root_spec in "${root_specs[@]}"; do
+    mount_source="${root_spec%%|*}"
+    mount_target="${root_spec#*|}"
+    if [[ "$target_file" == "$mount_source"* ]]; then
+      candidate_source="$mount_source"
+      candidate_target="$mount_target"
+      break
+    fi
+  done
 
-  snippet_name="intellion-metrica-$(slugify_identifier "${PUBLIC_HOST}-${ENTRY_PATH}-attach-path").conf"
-  snippet_path="/etc/nginx/snippets/$snippet_name"
+  [[ -n "$candidate_source" && -n "$candidate_target" ]] || {
+    printf '%s\n' "failed to map docker nginx config path for $target_file" >&2
+    return 1
+  }
+
+  local snippet_name="intellion-metrica-$(slugify_identifier "${PUBLIC_HOST}-${ENTRY_PATH}-attach-path").conf"
+  local snippet_host_dir=""
+  local snippet_include_path=""
+
+  if [[ "$candidate_target" == "/etc/nginx/conf.d" || "$candidate_target" == "/etc/nginx/sites-enabled" ]]; then
+    snippet_host_dir="$candidate_source"
+    snippet_include_path="$candidate_target/$snippet_name"
+  else
+    snippet_host_dir="$candidate_source/snippets"
+    snippet_include_path="/etc/nginx/snippets/$snippet_name"
+  fi
+
+  mkdir -p "$snippet_host_dir"
+  printf '%s\n%s\n%s\n' "$target_file" "$snippet_host_dir/$snippet_name" "$snippet_include_path"
+}
+
+try_apply_nginx_attach() {
+  local target_file="$1"
+  local snippet_host_path="$2"
+  local include_path="$3"
+  local validate_cmd="$4"
+  local reload_cmd="$5"
+  local kind="$6"
+  local container_name="${7:-}"
+  local backup_dir backup_path snippet_backup_path="" insert_status=""
+
   backup_dir="$INSTALL_DIR/artifacts/install/${BOOT_TS}-one-command-install/nginx-backups"
   backup_path="$backup_dir/$(basename "$target_file").bak"
 
-  mkdir -p "$backup_dir" /etc/nginx/snippets
-  if [[ -f "$snippet_path" ]]; then
-    snippet_backup_path="$backup_dir/$(basename "$snippet_path").bak"
-    cp "$snippet_path" "$snippet_backup_path"
+  mkdir -p "$backup_dir"
+  if [[ -f "$snippet_host_path" ]]; then
+    snippet_backup_path="$backup_dir/$(basename "$snippet_host_path").bak"
+    cp "$snippet_host_path" "$snippet_backup_path"
   fi
-  cp "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf" "$snippet_path"
-  chmod 644 "$snippet_path"
+  cp "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf" "$snippet_host_path"
+  chmod 644 "$snippet_host_path"
   cp "$target_file" "$backup_path"
 
   if ! insert_status="$(
@@ -892,63 +982,126 @@ auto_attach_nginx_path_proxy() {
       insert-include \
       --host "$PUBLIC_HOST" \
       --file "$target_file" \
-      --include-path "$snippet_path"
+      --include-path "$include_path"
   )"; then
     if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
-      cp "$snippet_backup_path" "$snippet_path"
+      cp "$snippet_backup_path" "$snippet_host_path"
     else
-      rm -f "$snippet_path"
+      rm -f "$snippet_host_path"
     fi
-    warn "nginx auto-attach was skipped because the server block could not be patched safely."
-    return 0
+    return 1
   fi
 
-  if ! nginx -t >/dev/null 2>&1; then
+  if ! eval "$validate_cmd" >/dev/null 2>&1; then
     cp "$backup_path" "$target_file"
     if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
-      cp "$snippet_backup_path" "$snippet_path"
+      cp "$snippet_backup_path" "$snippet_host_path"
     else
-      rm -f "$snippet_path"
+      rm -f "$snippet_host_path"
     fi
-    warn "nginx auto-attach was reverted because nginx -t failed after patching."
-    return 0
+    return 1
   fi
 
-  if have_command systemctl; then
-    if ! systemctl reload nginx >/dev/null 2>&1; then
-      if [[ "$insert_status" != "already-present" ]]; then
-        cp "$backup_path" "$target_file"
-      fi
-      if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
-        cp "$snippet_backup_path" "$snippet_path"
-      elif [[ "$insert_status" != "already-present" ]]; then
-        rm -f "$snippet_path"
-      fi
-      nginx -t >/dev/null 2>&1 || true
-      systemctl reload nginx >/dev/null 2>&1 || true
-      warn "nginx auto-attach was reverted because nginx reload failed."
-      return 0
-    fi
-  elif ! nginx -s reload >/dev/null 2>&1; then
+  if ! eval "$reload_cmd" >/dev/null 2>&1; then
     if [[ "$insert_status" != "already-present" ]]; then
       cp "$backup_path" "$target_file"
     fi
     if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
-      cp "$snippet_backup_path" "$snippet_path"
+      cp "$snippet_backup_path" "$snippet_host_path"
     elif [[ "$insert_status" != "already-present" ]]; then
-      rm -f "$snippet_path"
+      rm -f "$snippet_host_path"
     fi
-    warn "nginx auto-attach was reverted because nginx reload failed."
-    return 0
+    return 1
   fi
 
   AUTO_ATTACH_PROXY_APPLIED=1
-  AUTO_ATTACH_PROXY_KIND="nginx"
+  AUTO_ATTACH_PROXY_KIND="$kind"
   AUTO_ATTACH_PROXY_TARGET_FILE="$target_file"
-  AUTO_ATTACH_PROXY_SNIPPET="$snippet_path"
+  AUTO_ATTACH_PROXY_SNIPPET="$snippet_host_path"
+  AUTO_ATTACH_PROXY_INCLUDE_PATH="$include_path"
+  AUTO_ATTACH_PROXY_CONTAINER_NAME="$container_name"
   AUTO_ATTACH_PROXY_CHECK_URL="$(control_plane_public_root_url)"
   persist_managed_state
   log "nginx auto-attach applied (${insert_status}) for $(control_plane_public_root_url)"
+  return 0
+}
+
+try_auto_attach_host_nginx_path_proxy() {
+  local target_file="" err_file
+  err_file="$(mktemp)"
+  if ! target_file="$(find_nginx_attach_target 2>"$err_file")"; then
+    rm -f "$err_file"
+    return 1
+  fi
+  rm -f "$err_file"
+
+  mkdir -p /etc/nginx/snippets
+  try_apply_nginx_attach \
+    "$target_file" \
+    "/etc/nginx/snippets/intellion-metrica-$(slugify_identifier "${PUBLIC_HOST}-${ENTRY_PATH}-attach-path").conf" \
+    "/etc/nginx/snippets/intellion-metrica-$(slugify_identifier "${PUBLIC_HOST}-${ENTRY_PATH}-attach-path").conf" \
+    "nginx -t" \
+    "$(have_command systemctl && printf 'systemctl reload nginx' || printf 'nginx -s reload')" \
+    "nginx"
+}
+
+try_auto_attach_docker_nginx_path_proxy() {
+  local container_name="" target_file="" snippet_host_path="" include_path="" resolved_paths=""
+  local err_file
+  err_file="$(mktemp)"
+  if ! container_name="$(find_docker_nginx_container 2>"$err_file")"; then
+    rm -f "$err_file"
+    return 1
+  fi
+  if ! resolved_paths="$(resolve_docker_nginx_attach_paths "$container_name" 2>"$err_file")"; then
+    rm -f "$err_file"
+    return 1
+  fi
+  rm -f "$err_file"
+  target_file="$(printf '%s\n' "$resolved_paths" | sed -n '1p')"
+  snippet_host_path="$(printf '%s\n' "$resolved_paths" | sed -n '2p')"
+  include_path="$(printf '%s\n' "$resolved_paths" | sed -n '3p')"
+
+  try_apply_nginx_attach \
+    "$target_file" \
+    "$snippet_host_path" \
+    "$include_path" \
+    "docker exec $container_name nginx -t" \
+    "docker exec $container_name nginx -s reload" \
+    "docker-nginx" \
+    "$container_name"
+}
+
+auto_attach_nginx_path_proxy() {
+  [[ "$AUTO_ATTACH_PROXY" -eq 1 ]] || return 0
+  [[ "$PUBLISH_MODE" == "attach-path" ]] || return 0
+
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    warn "Автоподключение reverse proxy пропущено: нужны root-права."
+    return 0
+  fi
+  if ! have_command python3; then
+    warn "Автоподключение reverse proxy пропущено: на сервере нет python3."
+    return 0
+  fi
+
+  if have_command nginx; then
+    if try_auto_attach_host_nginx_path_proxy; then
+      return 0
+    fi
+    warn "Автоподключение host-nginx не удалось. Пробую найти dockerized nginx."
+  fi
+
+  if have_command docker && try_auto_attach_docker_nginx_path_proxy; then
+    return 0
+  fi
+
+  if ! have_command nginx && have_command docker; then
+    warn "На этом сервере нет host-nginx. Если сайт опубликован через dockerized nginx, его конфиг не удалось безопасно изменить автоматически. Публичная ссылка пока может отдавать 404."
+    return 0
+  fi
+
+  warn "Путь /metrica еще не опубликован наружу автоматически. Подключите reverse proxy вручную, иначе публичный URL будет отдавать 404."
 }
 
 copy_or_fetch_script() {

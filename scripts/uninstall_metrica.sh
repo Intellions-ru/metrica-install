@@ -23,6 +23,8 @@ AUTO_ATTACH_PROXY_APPLIED=0
 AUTO_ATTACH_PROXY_KIND=""
 AUTO_ATTACH_PROXY_TARGET_FILE=""
 AUTO_ATTACH_PROXY_SNIPPET=""
+AUTO_ATTACH_PROXY_INCLUDE_PATH=""
+AUTO_ATTACH_PROXY_CONTAINER_NAME=""
 
 usage() {
   cat <<'EOF'
@@ -157,6 +159,8 @@ load_install_context() {
   AUTO_ATTACH_PROXY_KIND="${AUTO_ATTACH_PROXY_KIND:-}"
   AUTO_ATTACH_PROXY_TARGET_FILE="${AUTO_ATTACH_PROXY_TARGET_FILE:-}"
   AUTO_ATTACH_PROXY_SNIPPET="${AUTO_ATTACH_PROXY_SNIPPET:-}"
+  AUTO_ATTACH_PROXY_INCLUDE_PATH="${AUTO_ATTACH_PROXY_INCLUDE_PATH:-$AUTO_ATTACH_PROXY_SNIPPET}"
+  AUTO_ATTACH_PROXY_CONTAINER_NAME="${AUTO_ATTACH_PROXY_CONTAINER_NAME:-}"
 }
 
 compose() {
@@ -249,7 +253,6 @@ backup_install_tree_if_needed() {
 
 remove_auto_managed_nginx_proxy() {
   [[ "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]] || return 0
-  [[ "$AUTO_ATTACH_PROXY_KIND" == "nginx" ]] || return 0
   [[ -n "$AUTO_ATTACH_PROXY_TARGET_FILE" ]] || return 0
   [[ -n "$AUTO_ATTACH_PROXY_SNIPPET" ]] || return 0
 
@@ -265,26 +268,40 @@ remove_auto_managed_nginx_proxy() {
   python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
     remove-include \
     --file "$AUTO_ATTACH_PROXY_TARGET_FILE" \
-    --include-path "$AUTO_ATTACH_PROXY_SNIPPET" >/dev/null
+    --include-path "$AUTO_ATTACH_PROXY_INCLUDE_PATH" >/dev/null
 
   rm -f "$AUTO_ATTACH_PROXY_SNIPPET"
 
-  if nginx -t >/dev/null 2>&1; then
-    if have_command systemctl; then
-      systemctl reload nginx >/dev/null 2>&1 || warn "Failed to reload nginx after removing the managed snippet."
-    else
-      nginx -s reload >/dev/null 2>&1 || warn "Failed to reload nginx after removing the managed snippet."
+  if [[ -n "$AUTO_ATTACH_PROXY_CONTAINER_NAME" ]]; then
+    if docker exec "$AUTO_ATTACH_PROXY_CONTAINER_NAME" nginx -t >/dev/null 2>&1; then
+      docker exec "$AUTO_ATTACH_PROXY_CONTAINER_NAME" nginx -s reload >/dev/null 2>&1 || \
+        warn "Failed to reload dockerized nginx after removing the managed snippet."
+      return 0
     fi
-    return 0
+  else
+    if nginx -t >/dev/null 2>&1; then
+      if have_command systemctl; then
+        systemctl reload nginx >/dev/null 2>&1 || warn "Failed to reload nginx after removing the managed snippet."
+      else
+        nginx -s reload >/dev/null 2>&1 || warn "Failed to reload nginx after removing the managed snippet."
+      fi
+      return 0
+    fi
   fi
 
-  warn "nginx -t failed after removing the managed snippet. Restoring previous config."
+  warn "nginx validation failed after removing the managed snippet. Restoring previous config."
   cp "$UNINSTALL_BACKUP_DIR/nginx/$(basename "$AUTO_ATTACH_PROXY_TARGET_FILE").bak" "$AUTO_ATTACH_PROXY_TARGET_FILE"
-  nginx -t >/dev/null 2>&1 || die "Restored nginx config still does not validate. Inspect the server manually."
-  if have_command systemctl; then
-    systemctl reload nginx >/dev/null 2>&1 || true
+  if [[ -n "$AUTO_ATTACH_PROXY_CONTAINER_NAME" ]]; then
+    docker exec "$AUTO_ATTACH_PROXY_CONTAINER_NAME" nginx -t >/dev/null 2>&1 || \
+      die "Restored dockerized nginx config still does not validate. Inspect the server manually."
+    docker exec "$AUTO_ATTACH_PROXY_CONTAINER_NAME" nginx -s reload >/dev/null 2>&1 || true
   else
-    nginx -s reload >/dev/null 2>&1 || true
+    nginx -t >/dev/null 2>&1 || die "Restored nginx config still does not validate. Inspect the server manually."
+    if have_command systemctl; then
+      systemctl reload nginx >/dev/null 2>&1 || true
+    else
+      nginx -s reload >/dev/null 2>&1 || true
+    fi
   fi
   die "Managed nginx snippet removal was reverted because nginx validation failed."
 }
