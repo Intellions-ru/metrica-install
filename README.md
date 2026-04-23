@@ -18,19 +18,28 @@
 Рекомендуемый старт:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.4/install_metrica.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.5/install_metrica.sh | sudo bash
+```
+
+Installer сам спросит:
+
+- режим публикации
+- домен
+- имя установки
+- почту первого владельца
+- почту для TLS
+- настройку MAX
+
+Если нужно заранее передать значения без интерактивных вопросов:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Intellions-ru/metrica-install/v0.2.5/install_metrica.sh | sudo bash -s -- \
   --publish-mode attach-path \
   --domain YOUR_DOMAIN \
   --entry-path /metrica \
   --installation-name "YOUR INSTALLATION NAME" \
   --owner-email YOUR_EMAIL
 ```
-
-Что заменить в команде:
-
-- `YOUR_DOMAIN` — домен клиента
-- `YOUR INSTALLATION NAME` — имя установки
-- `YOUR_EMAIL` — почта первого владельца
 
 Во время интерактивной установки может появиться вопрос:
 
@@ -63,7 +72,7 @@ MAX bot token (leave empty to skip):
 
 Для самого простого старта лучше использовать versioned install bundle из Releases:
 
-- `intellion-metrica-install-bundle-v0.2.4.tar.gz`
+- `intellion-metrica-install-bundle-v0.2.5.tar.gz`
 
 Он уже включает product images, поэтому отдельный Docker registry login для обычной установки не нужен.
 

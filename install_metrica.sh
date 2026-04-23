@@ -254,13 +254,27 @@ prompt_value() {
   fi
 
   if [[ -n "$default_value" ]]; then
-    read -r -p "$prompt_text [$default_value]: " value || true
+    read_prompt_value "$prompt_text [$default_value]: " value
     value="${value:-$default_value}"
   else
-    read -r -p "$prompt_text: " value || true
+    read_prompt_value "$prompt_text: " value
   fi
 
   printf -v "$var_name" '%s' "$value"
+}
+
+read_prompt_value() {
+  local prompt_text="$1"
+  local __resultvar="$2"
+  local prompt_input=""
+
+  if [[ -t 0 ]]; then
+    read -r -p "$prompt_text" prompt_input || true
+  elif [[ -r /dev/tty ]]; then
+    read -r -p "$prompt_text" prompt_input < /dev/tty || true
+  fi
+
+  printf -v "$__resultvar" '%s' "$prompt_input"
 }
 
 validate_email() {
@@ -489,7 +503,7 @@ parse_args() {
 
 collect_inputs() {
   if [[ -z "$PUBLISH_MODE" && "$NON_INTERACTIVE" -eq 0 ]]; then
-    read -r -p "Publication mode (attach-path/attach-subdomain/standalone) [attach-path]: " PUBLISH_MODE || true
+    read_prompt_value "Publication mode (attach-path/attach-subdomain/standalone) [attach-path]: " PUBLISH_MODE
     PUBLISH_MODE="${PUBLISH_MODE:-attach-path}"
   fi
 
@@ -503,7 +517,7 @@ collect_inputs() {
 
   if [[ -z "$MAX_BOT_TOKEN" && "$NON_INTERACTIVE" -eq 0 ]]; then
     local use_max=""
-    read -r -p "Configure MAX bot now? [y/N]: " use_max || true
+    read_prompt_value "Configure MAX bot now? [y/N]: " use_max
     if [[ "$use_max" =~ ^[Yy]$ ]]; then
       prompt_value MAX_BOT_TOKEN "MAX bot token (leave empty to skip)"
       if [[ -z "$MAX_BOT_TOKEN" ]]; then

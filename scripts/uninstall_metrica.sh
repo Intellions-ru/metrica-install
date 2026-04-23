@@ -175,6 +175,20 @@ prepare_backup_dir() {
   log "Backup directory: $UNINSTALL_BACKUP_DIR"
 }
 
+read_prompt_value() {
+  local prompt_text="$1"
+  local __resultvar="$2"
+  local prompt_input=""
+
+  if [[ -t 0 ]]; then
+    read -r -p "$prompt_text" prompt_input || true
+  elif [[ -r /dev/tty ]]; then
+    read -r -p "$prompt_text" prompt_input < /dev/tty || true
+  fi
+
+  printf -v "$__resultvar" '%s' "$prompt_input"
+}
+
 confirm_or_exit() {
   local summary="This will stop Intellion Metrica containers"
   if [[ "$PURGE_ALL" -eq 1 ]]; then
@@ -193,7 +207,7 @@ confirm_or_exit() {
   fi
 
   printf '%s\n' "$summary."
-  read -r -p "Continue? [y/N]: " answer || true
+  read_prompt_value "Continue? [y/N]: " answer
   [[ "$answer" =~ ^[Yy]$ ]] || die "Uninstall cancelled."
 }
 
