@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 INSTALLER_VERSION="v2"
 DEFAULT_INSTALL_DIR="/opt/intellion-metrica"
-DEFAULT_IMAGE_VERSION="v0.2.15"
-DEFAULT_BUNDLE_REF="v0.2.15"
+DEFAULT_IMAGE_VERSION="v0.2.16"
+DEFAULT_BUNDLE_REF="v0.2.16"
 DEFAULT_IMAGE_REGISTRY="ghcr.io/intellions-ru"
 DEFAULT_PRODUCT_BUNDLE_URL_BASE="https://github.com/Intellions-ru/metrica-install/releases/download"
 DEFAULT_INSTALLER_HELPERS_URL_BASE="https://raw.githubusercontent.com/Intellions-ru/metrica-install/main/scripts"
@@ -78,6 +78,9 @@ AUTO_ATTACH_PROXY_CONTAINER_NAME=""
 AUTO_ATTACH_PROXY_CHECK_URL=""
 AUTO_ATTACH_PROXY_BLOCK_BEGIN=""
 AUTO_ATTACH_PROXY_BLOCK_END=""
+AUTO_ATTACH_ROOT_TARGET_FILE=""
+AUTO_ATTACH_ROOT_BLOCK_BEGIN=""
+AUTO_ATTACH_ROOT_BLOCK_END=""
 MANAGED_STATE_FILE=""
 MAX_DIGEST_TIMER_INSTALLED=0
 
@@ -290,6 +293,23 @@ validate_host() {
   [[ "$1" =~ ^[A-Za-z0-9.-]+$ ]]
 }
 
+normalize_public_host_input() {
+  local value="${1:-}"
+  value="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value#//}"
+  value="${value%%/*}"
+  value="${value%%\?*}"
+  value="${value%%\#*}"
+  value="${value%:80}"
+  value="${value%:443}"
+  value="${value%.}"
+  printf '%s' "$value"
+}
+
 validate_entry_path() {
   [[ "$1" =~ ^/[-A-Za-z0-9/_]+$ ]]
 }
@@ -386,6 +406,14 @@ managed_proxy_begin_marker() {
 
 managed_proxy_end_marker() {
   printf '# END INTELLION METRICA AUTO ATTACH %s' "$(managed_proxy_marker_id)"
+}
+
+managed_root_inject_begin_marker() {
+  printf '# BEGIN INTELLION METRICA AUTO INJECT %s' "$(managed_proxy_marker_id)"
+}
+
+managed_root_inject_end_marker() {
+  printf '# END INTELLION METRICA AUTO INJECT %s' "$(managed_proxy_marker_id)"
 }
 
 control_plane_public_referer() {
@@ -525,8 +553,11 @@ collect_inputs() {
 
   PUBLISH_MODE="$(normalize_publish_mode "$PUBLISH_MODE")"
 
-  prompt_value PUBLIC_HOST "Введите домен, где будет открываться Метрика"
-  prompt_value INSTALLATION_NAME "Введите имя установки"
+  prompt_value PUBLIC_HOST "Введите домен, где будет открываться Метрика (без пути; можно вставить и https://example.com, installer оставит только host)"
+  PUBLIC_HOST="$(normalize_public_host_input "$PUBLIC_HOST")"
+  if [[ -z "$INSTALLATION_NAME" ]]; then
+    INSTALLATION_NAME="$PUBLIC_HOST"
+  fi
   prompt_value OWNER_EMAIL "Введите почту владельца"
   prompt_value OWNER_NAME "Введите имя владельца" "$OWNER_NAME"
   prompt_value ACME_EMAIL "Введите почту для TLS-уведомлений" "${ACME_EMAIL:-$OWNER_EMAIL}"
@@ -804,6 +835,8 @@ write_proxy_templates() {
   if [[ "$PUBLISH_MODE" == "attach-path" ]]; then
     render_template "$BUNDLE_ROOT/install/nginx_attach_path_v1.conf.tpl" \
       "$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf"
+    render_template "$BUNDLE_ROOT/install/nginx_site_inject_v1.conf.tpl" \
+      "$INSTALL_DIR/runtime/proxy/nginx/site-inject.conf"
     render_template "$BUNDLE_ROOT/install/caddy_attach_path_v1.tpl" \
       "$INSTALL_DIR/runtime/proxy/caddy/attach-path.Caddyfile"
   elif [[ "$PUBLISH_MODE" == "attach-subdomain" ]]; then
@@ -852,9 +885,12 @@ AUTO_ATTACH_PROXY_TARGET_FILE=$(printf '%q' "$AUTO_ATTACH_PROXY_TARGET_FILE")
 AUTO_ATTACH_PROXY_SNIPPET=$(printf '%q' "$AUTO_ATTACH_PROXY_SNIPPET")
 AUTO_ATTACH_PROXY_INCLUDE_PATH=$(printf '%q' "$AUTO_ATTACH_PROXY_INCLUDE_PATH")
 AUTO_ATTACH_PROXY_CONTAINER_NAME=$(printf '%q' "$AUTO_ATTACH_PROXY_CONTAINER_NAME")
-AUTO_ATTACH_PROXY_CHECK_URL=$(printf '%q' "$AUTO_ATTACH_PROXY_CHECK_URL")
-AUTO_ATTACH_PROXY_BLOCK_BEGIN=$(printf '%q' "$AUTO_ATTACH_PROXY_BLOCK_BEGIN")
-AUTO_ATTACH_PROXY_BLOCK_END=$(printf '%q' "$AUTO_ATTACH_PROXY_BLOCK_END")
+  AUTO_ATTACH_PROXY_CHECK_URL=$(printf '%q' "$AUTO_ATTACH_PROXY_CHECK_URL")
+  AUTO_ATTACH_PROXY_BLOCK_BEGIN=$(printf '%q' "$AUTO_ATTACH_PROXY_BLOCK_BEGIN")
+  AUTO_ATTACH_PROXY_BLOCK_END=$(printf '%q' "$AUTO_ATTACH_PROXY_BLOCK_END")
+  AUTO_ATTACH_ROOT_TARGET_FILE=$(printf '%q' "$AUTO_ATTACH_ROOT_TARGET_FILE")
+  AUTO_ATTACH_ROOT_BLOCK_BEGIN=$(printf '%q' "$AUTO_ATTACH_ROOT_BLOCK_BEGIN")
+  AUTO_ATTACH_ROOT_BLOCK_END=$(printf '%q' "$AUTO_ATTACH_ROOT_BLOCK_END")
 MAX_DIGEST_TIMER_INSTALLED=$(printf '%q' "$MAX_DIGEST_TIMER_INSTALLED")
 EOF
   chmod 600 "$MANAGED_STATE_FILE"
@@ -1054,10 +1090,14 @@ try_apply_nginx_attach() {
   local kind="$6"
   local container_name="${7:-}"
   local block_file="${8:-$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf}"
-  local backup_dir backup_path snippet_backup_path="" insert_status=""
+  local site_inject_file="${9:-$INSTALL_DIR/runtime/proxy/nginx/site-inject.conf}"
+  local backup_dir backup_path snippet_backup_path="" insert_status="" location_status=""
+  local root_begin_marker="" root_end_marker=""
 
   backup_dir="$INSTALL_DIR/artifacts/install/${BOOT_TS}-one-command-install/nginx-backups"
   backup_path="$backup_dir/$(basename "$target_file").bak"
+  root_begin_marker="$(managed_root_inject_begin_marker)"
+  root_end_marker="$(managed_root_inject_end_marker)"
 
   mkdir -p "$backup_dir"
   if [[ -f "$snippet_host_path" ]]; then
@@ -1075,6 +1115,25 @@ try_apply_nginx_attach() {
       --file "$target_file" \
       --include-path "$include_path"
   )"; then
+    if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
+      cp "$snippet_backup_path" "$snippet_host_path"
+    else
+      rm -f "$snippet_host_path"
+    fi
+    return 1
+  fi
+
+  if ! location_status="$(
+    python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
+      insert-block-into-location \
+      --host "$PUBLIC_HOST" \
+      --location-path "/" \
+      --file "$target_file" \
+      --block-file "$site_inject_file" \
+      --begin-marker "$root_begin_marker" \
+      --end-marker "$root_end_marker"
+  )"; then
+    cp "$backup_path" "$target_file"
     if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
       cp "$snippet_backup_path" "$snippet_host_path"
     else
@@ -1115,8 +1174,11 @@ try_apply_nginx_attach() {
   AUTO_ATTACH_PROXY_CHECK_URL="$(control_plane_public_root_url)"
   AUTO_ATTACH_PROXY_BLOCK_BEGIN=""
   AUTO_ATTACH_PROXY_BLOCK_END=""
+  AUTO_ATTACH_ROOT_TARGET_FILE="$target_file"
+  AUTO_ATTACH_ROOT_BLOCK_BEGIN="$root_begin_marker"
+  AUTO_ATTACH_ROOT_BLOCK_END="$root_end_marker"
   persist_managed_state
-  log "nginx auto-attach applied (${insert_status}) for $(control_plane_public_root_url)"
+  log "nginx auto-attach applied (${insert_status}, location ${location_status}) for $(control_plane_public_root_url)"
   return 0
 }
 
@@ -1129,10 +1191,14 @@ try_apply_nginx_attach_inline() {
   local begin_marker="$6"
   local end_marker="$7"
   local block_file="${8:-$INSTALL_DIR/runtime/proxy/nginx/attach-path.conf}"
-  local backup_dir backup_path insert_status=""
+  local site_inject_file="${9:-$INSTALL_DIR/runtime/proxy/nginx/site-inject.conf}"
+  local backup_dir backup_path insert_status="" location_status=""
+  local root_begin_marker="" root_end_marker=""
 
   backup_dir="$INSTALL_DIR/artifacts/install/${BOOT_TS}-one-command-install/nginx-backups"
   backup_path="$backup_dir/$(basename "$target_file").bak"
+  root_begin_marker="$(managed_root_inject_begin_marker)"
+  root_end_marker="$(managed_root_inject_end_marker)"
 
   mkdir -p "$backup_dir"
   cp "$target_file" "$backup_path"
@@ -1146,6 +1212,20 @@ try_apply_nginx_attach_inline() {
       --begin-marker "$begin_marker" \
       --end-marker "$end_marker"
   )"; then
+    return 1
+  fi
+
+  if ! location_status="$(
+    python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
+      insert-block-into-location \
+      --host "$PUBLIC_HOST" \
+      --location-path "/" \
+      --file "$target_file" \
+      --block-file "$site_inject_file" \
+      --begin-marker "$root_begin_marker" \
+      --end-marker "$root_end_marker"
+  )"; then
+    cp "$backup_path" "$target_file"
     return 1
   fi
 
@@ -1171,8 +1251,11 @@ try_apply_nginx_attach_inline() {
   AUTO_ATTACH_PROXY_CHECK_URL="$(control_plane_public_root_url)"
   AUTO_ATTACH_PROXY_BLOCK_BEGIN="$begin_marker"
   AUTO_ATTACH_PROXY_BLOCK_END="$end_marker"
+  AUTO_ATTACH_ROOT_TARGET_FILE="$target_file"
+  AUTO_ATTACH_ROOT_BLOCK_BEGIN="$root_begin_marker"
+  AUTO_ATTACH_ROOT_BLOCK_END="$root_end_marker"
   persist_managed_state
-  log "nginx auto-attach applied (${insert_status}, inline) for $(control_plane_public_root_url)"
+  log "nginx auto-attach applied (${insert_status}, inline, location ${location_status}) for $(control_plane_public_root_url)"
   return 0
 }
 
@@ -1661,6 +1744,16 @@ post_install_smoke() {
     warn "Attach-path auto-attach was applied, but the public ingress check still needs confirmation."
   else
     warn "Путь /metrica еще не опубликован наружу. Сначала подключите reverse proxy, иначе публичный URL будет отдавать 404."
+  fi
+
+  if [[ "$PUBLISH_MODE" == "attach-path" && "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]]; then
+    if curl -kfsSL --compressed \
+      --resolve "${PUBLIC_HOST}:443:127.0.0.1" \
+      "https://${PUBLIC_HOST}/" | grep -Fq "$(control_plane_local_path "/api/analytics/autoload")"; then
+      log "Browser-like HTML response already includes the autoload analytics loader."
+    else
+      warn "Публичный HTML-ответ сайта не содержит autoload analytics loader в browser-like режиме. Обычно это означает, что reverse proxy все еще сжимает HTML до sub_filter или отдает нестандартный ответ."
+    fi
   fi
 
   verify_owner_login

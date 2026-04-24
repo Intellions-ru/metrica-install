@@ -63,6 +63,70 @@ def block_text(lines, block):
     return "".join(lines[start : end + 1])
 
 
+def parse_location_blocks(lines, outer_block):
+    start, end = outer_block
+    blocks = []
+    in_location = False
+    pending_location = False
+    pending_start = 0
+    pending_modifier = ""
+    pending_path = ""
+    location_start = 0
+    depth = 0
+    modifier = ""
+    path = ""
+
+    inline_pattern = re.compile(r"^\s*location(?:\s+(=|\^~|~\*|~))?\s+([^\s{]+)\s*\{")
+    pending_pattern = re.compile(r"^\s*location(?:\s+(=|\^~|~\*|~))?\s+([^\s{]+)\s*$")
+
+    for idx in range(start + 1, end):
+        clean = strip_comments(lines[idx])
+
+        if not in_location:
+            match = inline_pattern.match(clean)
+            if match:
+                in_location = True
+                location_start = idx
+                modifier = match.group(1) or ""
+                path = match.group(2)
+                depth = clean.count("{") - clean.count("}")
+                if depth == 0:
+                    blocks.append((location_start, idx, modifier, path))
+                    in_location = False
+                continue
+
+            match = pending_pattern.match(clean)
+            if match:
+                pending_location = True
+                pending_start = idx
+                pending_modifier = match.group(1) or ""
+                pending_path = match.group(2)
+                continue
+
+            if pending_location:
+                if "{" in clean:
+                    in_location = True
+                    location_start = pending_start
+                    modifier = pending_modifier
+                    path = pending_path
+                    depth = clean.count("{") - clean.count("}")
+                    pending_location = False
+                    if depth == 0:
+                        blocks.append((location_start, idx, modifier, path))
+                        in_location = False
+                    continue
+                if clean.strip():
+                    pending_location = False
+            continue
+
+        depth += clean.count("{") - clean.count("}")
+        if depth == 0:
+            blocks.append((location_start, idx, modifier, path))
+            in_location = False
+
+    return blocks
+
+
 def block_server_names(block: str):
     names = []
     for match in re.finditer(r"^\s*server_name\s+([^;]+);", block, flags=re.MULTILINE):
@@ -94,6 +158,30 @@ def choose_block(lines, blocks, host: str):
         return matches[0][0]
 
     raise RuntimeError(f"ambiguous matching server blocks for host {host}")
+
+
+def choose_location_block(lines, server_block, location_path: str):
+    matches = []
+    for block in parse_location_blocks(lines, server_block):
+        start, end, modifier, path = block
+        if path != location_path:
+            continue
+        text = block_text(lines, (start, end))
+        score = 0
+        if re.search(r"^\s*proxy_pass\s+", text, flags=re.MULTILINE):
+            score += 10
+        if modifier == "":
+            score += 5
+        matches.append((score, block))
+
+    if not matches:
+        raise RuntimeError(f"no matching location block for path {location_path}")
+
+    matches.sort(key=lambda item: item[0], reverse=True)
+    if len(matches) > 1 and matches[0][0] == matches[1][0]:
+        raise RuntimeError(f"ambiguous matching location blocks for path {location_path}")
+
+    return matches[0][1]
 
 
 def candidate_files(search_roots):
@@ -211,6 +299,34 @@ def insert_managed_block(
     return "inserted"
 
 
+def insert_managed_block_into_location(
+    config_file: Path,
+    host: str,
+    location_path: str,
+    block_file: Path,
+    begin_marker: str,
+    end_marker: str,
+):
+    text = config_file.read_text(encoding="utf-8")
+    lines, blocks = parse_server_blocks(text)
+    chosen_server = choose_block(lines, blocks, host)
+    chosen_location = choose_location_block(lines, chosen_server, location_path)
+    start, end, _, _ = chosen_location
+    chosen_lines = lines[start : end + 1]
+
+    for line in chosen_lines:
+        stripped = line.strip()
+        if stripped == begin_marker or stripped == end_marker:
+            return "already-present"
+
+    closing_indent = re.match(r"^(\s*)", lines[end]).group(1)
+    block_indent = closing_indent + "  "
+    block_text = block_file.read_text(encoding="utf-8")
+    lines[end:end] = render_managed_block(block_text, block_indent, begin_marker, end_marker)
+    config_file.write_text("".join(lines), encoding="utf-8")
+    return "inserted"
+
+
 def remove_managed_block(config_file: Path, begin_marker: str, end_marker: str):
     lines = config_file.read_text(encoding="utf-8").splitlines(keepends=True)
     begin_index = None
@@ -259,6 +375,14 @@ def main():
     insert_block_parser.add_argument("--begin-marker", required=True)
     insert_block_parser.add_argument("--end-marker", required=True)
 
+    insert_location_block_parser = subparsers.add_parser("insert-block-into-location")
+    insert_location_block_parser.add_argument("--host", required=True)
+    insert_location_block_parser.add_argument("--location-path", required=True)
+    insert_location_block_parser.add_argument("--file", required=True)
+    insert_location_block_parser.add_argument("--block-file", required=True)
+    insert_location_block_parser.add_argument("--begin-marker", required=True)
+    insert_location_block_parser.add_argument("--end-marker", required=True)
+
     remove_block_parser = subparsers.add_parser("remove-block")
     remove_block_parser.add_argument("--file", required=True)
     remove_block_parser.add_argument("--begin-marker", required=True)
@@ -281,6 +405,18 @@ def main():
                 insert_managed_block(
                     Path(args.file),
                     args.host,
+                    Path(args.block_file),
+                    args.begin_marker,
+                    args.end_marker,
+                )
+            )
+            return
+        if args.command == "insert-block-into-location":
+            print(
+                insert_managed_block_into_location(
+                    Path(args.file),
+                    args.host,
+                    args.location_path,
                     Path(args.block_file),
                     args.begin_marker,
                     args.end_marker,

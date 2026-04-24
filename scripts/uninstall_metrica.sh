@@ -28,6 +28,9 @@ AUTO_ATTACH_PROXY_INCLUDE_PATH=""
 AUTO_ATTACH_PROXY_CONTAINER_NAME=""
 AUTO_ATTACH_PROXY_BLOCK_BEGIN=""
 AUTO_ATTACH_PROXY_BLOCK_END=""
+AUTO_ATTACH_ROOT_TARGET_FILE=""
+AUTO_ATTACH_ROOT_BLOCK_BEGIN=""
+AUTO_ATTACH_ROOT_BLOCK_END=""
 
 usage() {
   cat <<'EOF'
@@ -167,6 +170,9 @@ load_install_context() {
   AUTO_ATTACH_PROXY_CONTAINER_NAME="${AUTO_ATTACH_PROXY_CONTAINER_NAME:-}"
   AUTO_ATTACH_PROXY_BLOCK_BEGIN="${AUTO_ATTACH_PROXY_BLOCK_BEGIN:-}"
   AUTO_ATTACH_PROXY_BLOCK_END="${AUTO_ATTACH_PROXY_BLOCK_END:-}"
+  AUTO_ATTACH_ROOT_TARGET_FILE="${AUTO_ATTACH_ROOT_TARGET_FILE:-}"
+  AUTO_ATTACH_ROOT_BLOCK_BEGIN="${AUTO_ATTACH_ROOT_BLOCK_BEGIN:-}"
+  AUTO_ATTACH_ROOT_BLOCK_END="${AUTO_ATTACH_ROOT_BLOCK_END:-}"
 }
 
 compose() {
@@ -260,6 +266,7 @@ backup_install_tree_if_needed() {
 remove_auto_managed_nginx_proxy() {
   [[ "$AUTO_ATTACH_PROXY_APPLIED" == "1" ]] || return 0
   [[ -n "$AUTO_ATTACH_PROXY_TARGET_FILE" ]] || return 0
+  local snippet_backup_path=""
 
   if [[ ! -f "$AUTO_ATTACH_PROXY_TARGET_FILE" ]]; then
     warn "Managed nginx target file is missing: $AUTO_ATTACH_PROXY_TARGET_FILE"
@@ -269,6 +276,18 @@ remove_auto_managed_nginx_proxy() {
   log "Removing installer-managed nginx attach block."
   mkdir -p "$UNINSTALL_BACKUP_DIR/nginx"
   cp "$AUTO_ATTACH_PROXY_TARGET_FILE" "$UNINSTALL_BACKUP_DIR/nginx/$(basename "$AUTO_ATTACH_PROXY_TARGET_FILE").bak"
+  if [[ -n "$AUTO_ATTACH_PROXY_SNIPPET" && -f "$AUTO_ATTACH_PROXY_SNIPPET" ]]; then
+    snippet_backup_path="$UNINSTALL_BACKUP_DIR/nginx/$(basename "$AUTO_ATTACH_PROXY_SNIPPET").bak"
+    cp "$AUTO_ATTACH_PROXY_SNIPPET" "$snippet_backup_path"
+  fi
+
+  if [[ -n "$AUTO_ATTACH_ROOT_TARGET_FILE" && -n "$AUTO_ATTACH_ROOT_BLOCK_BEGIN" && -n "$AUTO_ATTACH_ROOT_BLOCK_END" && -f "$AUTO_ATTACH_ROOT_TARGET_FILE" ]]; then
+    python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
+      remove-block \
+      --file "$AUTO_ATTACH_ROOT_TARGET_FILE" \
+      --begin-marker "$AUTO_ATTACH_ROOT_BLOCK_BEGIN" \
+      --end-marker "$AUTO_ATTACH_ROOT_BLOCK_END" >/dev/null || true
+  fi
 
   if [[ "$AUTO_ATTACH_PROXY_MODE" == "inline" ]]; then
     python3 "$INSTALL_DIR/scripts/manage_nginx_site.py" \
@@ -306,6 +325,9 @@ remove_auto_managed_nginx_proxy() {
 
   warn "nginx validation failed after removing the managed snippet. Restoring previous config."
   cp "$UNINSTALL_BACKUP_DIR/nginx/$(basename "$AUTO_ATTACH_PROXY_TARGET_FILE").bak" "$AUTO_ATTACH_PROXY_TARGET_FILE"
+  if [[ -n "$snippet_backup_path" && -f "$snippet_backup_path" ]]; then
+    cp "$snippet_backup_path" "$AUTO_ATTACH_PROXY_SNIPPET"
+  fi
   if [[ -n "$AUTO_ATTACH_PROXY_CONTAINER_NAME" ]]; then
     docker exec "$AUTO_ATTACH_PROXY_CONTAINER_NAME" nginx -t >/dev/null 2>&1 || \
       die "Restored dockerized nginx config still does not validate. Inspect the server manually."
